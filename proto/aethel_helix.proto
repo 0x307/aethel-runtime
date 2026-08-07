@@ -1,0 +1,102 @@
+syntax = "proto3";
+package aethel.helix;
+
+// HelixDB state store service for Aethel-Vault encrypted state persistence.
+//
+// Provides four RPC methods:
+// - UpsertStateNode: Insert or update a vault state node
+// - VectorProximitySearch: HNSW k-nearest-neighbor search over 256-dim vectors
+// - TraverseTemporalTrajectory: Follow EVOLVED_TO edges through time
+// - PruneTemporalNode: Forward-private deletion of a state node
+
+service HelixStateStore {
+    rpc UpsertStateNode(StateNodeRequest) returns (StateNodeResponse);
+    rpc VectorProximitySearch(VectorSearchRequest) returns (VectorSearchResponse);
+    rpc TraverseTemporalTrajectory(TraversalRequest) returns (TraversalResponse);
+    rpc PruneTemporalNode(PruneRequest) returns (PruneResponse);
+}
+
+// Request to upsert a vault state node.
+message StateNodeRequest {
+    // 32-byte vault ID derived from PLP ephemeral projection.
+    bytes vault_id = 1;
+    // Bincode-serialized FheUint64 ciphertext of the vault balance.
+    bytes ciphertext = 2;
+    // Logical clock timestamp (Unix epoch milliseconds).
+    uint64 timestamp = 3;
+    // 256-dimensional Float32 vector for HNSW proximity search.
+    // Must contain exactly 256 elements.
+    repeated float vector_embedding = 4;
+    // Optional: previous node ID for EVOLVED_TO edge creation.
+    string previous_node_id = 5;
+    // Geodesic distance from previous node (0.0 if first epoch).
+    float geodesic_distance = 6;
+}
+
+// Response from a state node upsert.
+message StateNodeResponse {
+    // Whether the operation succeeded.
+    bool success = 1;
+    // Assigned node ID (UUID v4).
+    string node_id = 2;
+    // Error message if success == false.
+    string error_message = 3;
+}
+
+// Request for k-nearest-neighbor vector proximity search.
+message VectorSearchRequest {
+    // 256-dimensional Float32 query vector.
+    repeated float query_vector = 1;
+    // Number of nearest neighbors to return.
+    uint32 top_k = 2;
+    // Minimum timestamp filter (inclusive).
+    uint64 min_timestamp = 3;
+    // Maximum timestamp filter (inclusive, 0 = no limit).
+    uint64 max_timestamp = 4;
+}
+
+// Response from a vector proximity search.
+message VectorSearchResponse {
+    // Node IDs of the k nearest neighbors, ordered by ascending distance.
+    repeated string node_ids = 1;
+    // Cosine distances corresponding to each node_id.
+    repeated float distances = 2;
+}
+
+// Request to traverse the temporal trajectory graph.
+message TraversalRequest {
+    // Starting vault ID for trajectory traversal.
+    bytes vault_id = 1;
+    // Minimum timestamp (inclusive).
+    uint64 from_timestamp = 2;
+    // Maximum timestamp (inclusive, 0 = no limit).
+    uint64 to_timestamp = 3;
+    // Maximum number of EVOLVED_TO hops to follow.
+    uint32 max_hops = 4;
+}
+
+// Response from a temporal trajectory traversal.
+message TraversalResponse {
+    // Ordered list of state nodes along the temporal trajectory.
+    repeated StateNodeRequest nodes = 1;
+}
+
+// Request to prune (forward-private delete) a state node.
+message PruneRequest {
+    // Vault ID whose nodes should be pruned.
+    bytes vault_id = 1;
+    // Delete all nodes with timestamp < before_timestamp.
+    uint64 before_timestamp = 2;
+    // ZK proof of ownership (serialized proof bytes).
+    bytes revocation_proof = 3;
+}
+
+// Response from a prune operation.
+message PruneResponse {
+    // Number of nodes pruned.
+    uint32 pruned_count = 1;
+    // Whether the operation succeeded.
+    bool success = 2;
+    // Error message if success == false.
+    string error_message = 3;
+}

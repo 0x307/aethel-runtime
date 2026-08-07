@@ -1,0 +1,48 @@
+package aethel:runtime@0.1.0;
+
+interface vault {
+  /// Initialize the vault with a server evaluation key
+  vault-init: func(server-key-bytes: list<u8>) -> u32;
+
+  /// Register a new vault with an initial encrypted balance
+  vault-register: func(vault-id: list<u8>, initial-balance-ct: list<u8>) -> u32;
+
+  /// Execute a homomorphic transfer between two vaults
+  vault-transfer: func(sender-id: list<u8>, receiver-id: list<u8>, transfer-ct: list<u8>) -> u32;
+
+  /// Export all vault state for HelixDB persistence
+  vault-export-state: func() -> list<u8>;
+
+  /// Import vault state from HelixDB
+  vault-import-state: func(state-bytes: list<u8>) -> u32;
+
+  /// Derive a vault ID from a PLP projection
+  vault-derive-id: func(projection-bytes: list<u8>) -> list<u8>;
+}
+
+interface client {
+  /// Create a new vault client with generated keys
+  /// Returns serialized AethelVaultClient handle
+  client-new: func() -> list<u8>;
+
+  /// Encrypt a u64 balance value
+  client-encrypt-balance: func(amount: u64) -> list<u8>;
+
+  /// Decrypt an encrypted balance
+  client-decrypt-balance: func(encrypted-bytes: list<u8>) -> u64;
+
+  /// Build a WASM transfer payload
+  client-build-payload: func(context-tag: list<u8>, amount: u64, target: list<u8>) -> list<u8>;
+}
+
+world aethel-runtime {
+  import host-fhe: interface {
+    host-fhe-sub: func(a: list<u8>, b: list<u8>) -> list<u8>;
+    host-fhe-add: func(a: list<u8>, b: list<u8>) -> list<u8>;
+    host-fhe-ge: func(a: list<u8>, b: list<u8>) -> list<u8>;
+    host-fhe-select: func(cond: list<u8>, a: list<u8>, b: list<u8>) -> list<u8>;
+    host-fhe-zero: func() -> list<u8>;
+  }
+  export vault;
+  export client;
+}

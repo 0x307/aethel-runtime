@@ -1,0 +1,22 @@
+{
+  "name": "aethel-vault",
+  "version": "0.1.0",
+  "target": "wasm32-unknown-unknown",
+  "exports": [
+    { "name": "vault_init", "params": [{"name": "server_key_bytes", "type": "bytes"}], "returns": "u32" },
+    { "name": "vault_register", "params": [{"name": "vault_id", "type": "bytes"}, {"name": "initial_balance_ct", "type": "bytes"}], "returns": "u32" },
+    { "name": "vault_transfer", "params": [{"name": "sender_id", "type": "bytes"}, {"name": "receiver_id", "type": "bytes"}, {"name": "transfer_ct", "type": "bytes"}], "returns": "u32" },
+    { "name": "vault_export_state", "params": [], "returns": "bytes" },
+    { "name": "vault_import_state", "params": [{"name": "state_bytes", "type": "bytes"}], "returns": "u32" },
+    { "name": "vault_derive_id", "params": [{"name": "projection_bytes", "type": "bytes"}], "returns": "bytes" }
+  ],
+  "imports": [
+    { "module": "env", "name": "host_fhe_sub", "params": [{"name": "a_ptr", "type": "i32"}, {"name": "a_len", "type": "i32"}, {"name": "b_ptr", "type": "i32"}, {"name": "b_len", "type": "i32"}, {"name": "out_ptr", "type": "i32"}], "returns": "i32" },
+    { "module": "env", "name": "host_fhe_add", "params": [{"name": "a_ptr", "type": "i32"}, {"name": "a_len", "type": "i32"}, {"name": "b_ptr", "type": "i32"}, {"name": "b_len", "type": "i32"}, {"name": "out_ptr", "type": "i32"}], "returns": "i32" },
+    { "module": "env", "name": "host_fhe_ge", "params": [{"name": "a_ptr", "type": "i32"}, {"name": "a_len", "type": "i32"}, {"name": "b_ptr", "type": "i32"}, {"name": "b_len", "type": "i32"}, {"name": "out_ptr", "type": "i32"}], "returns": "i32" },
+    { "module": "env", "name": "host_fhe_select", "params": [{"name": "cond_ptr", "type": "i32"}, {"name": "cond_len", "type": "i32"}, {"name": "a_ptr", "type": "i32"}, {"name": "a_len", "type": "i32"}, {"name": "b_ptr", "type": "i32"}, {"name": "b_len", "type": "i32"}, {"name": "out_ptr", "type": "i32"}], "returns": "i32" },
+    { "module": "env", "name": "host_fhe_zero", "params": [{"name": "out_ptr", "type": "i32"}], "returns": "i32" }
+  ],
+  "memory": "exported",
+  "allocator": "wasm-bindgen"
+}

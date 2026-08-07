@@ -1,0 +1,118 @@
+[package]
+name = "aethel-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Aethel-Vault: Blind-state quantum wallet with TFHE homomorphic encryption"
+authors = ["K. Harper et al. <aytch4k@aethel.network>"]
+license = "Apache-2.0"
+repository = "https://github.com/0x307/aethel"
+keywords = ["fhe", "homomorphic-encryption", "wasm", "post-quantum", "wallet"]
+categories = ["cryptography", "wasm"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# ── Features ──────────────────────────────────────────────────────────────────
+
+[features]
+# Default: enable std for HelixDB storage adapter (async I/O, networking)
+default = ["std"]
+
+# Standard library support — required for HelixDB storage adapter
+std = [
+    "serde/std",
+    "tokio",
+    "tonic",
+    "prost",
+]
+
+# WASM-specific features: wasm-bindgen exports
+# Also enables aethel-id's wasm feature so wasm-bindgen provides the
+# global allocator and panic handler for wasm32-unknown-unknown.
+wasm = [
+    "wasm-bindgen",
+    "zeroize",
+    "aethel-id/wasm",
+]
+
+# ── Core Dependencies (all targets) ──────────────────────────────────────────
+
+[dependencies]
+
+# Binary serialization — no_std compatible (default-features = false)
+bincode = { version = "1.3", default-features = false }
+
+# Serialization framework — no_std compatible with alloc feature
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+
+# SHA3 / SHAKE-256 for vault ID derivation
+sha3 = { version = "0.10", default-features = false }
+
+# Secure memory zeroization
+zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
+
+# ── aethel-id (aethel-core) — PLP vault ID derivation ─────────────────────────
+# default-features = false: don't pull in aethel-id's std feature by default.
+# The wasm feature of aethel-vault enables aethel-id's wasm feature so that
+# wasm-bindgen provides the allocator and panic handler for wasm32 targets.
+[dependencies.aethel-id]
+path = "../aethel-core"
+default-features = false
+optional = false
+
+# ── WASM-bindgen (optional) ───────────────────────────────────────────────────
+[dependencies.wasm-bindgen]
+version = "0.2"
+optional = true
+
+# ── Native-only dependencies (non-wasm32 target) ──────────────────────────────
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# TFHE with full integer API for native builds
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
+# Async runtime for gRPC
+tokio = { version = "1", features = ["full"], optional = true }
+# gRPC framework
+tonic = { version = "0.11", optional = true }
+# Protocol Buffers
+prost = { version = "0.12", optional = true }
+
+# ── WASM-only dependencies ────────────────────────────────────────────────────
+# NOTE: The vault contract WASM binary does NOT link tfhe directly.
+# The wasmer.io host environment provides TFHE operations via host imports.
+# The WASM binary is a pure state machine that stores/retrieves serialized
+# ciphertext bytes — all homomorphic operations are delegated to the host.
+# This keeps the WASM binary small and avoids the tfhe WASM compilation issues.
+
+# ── Build Dependencies ────────────────────────────────────────────────────────
+
+[build-dependencies]
+# prost-build: Generate Rust types from proto3 definitions (native only)
+prost-build = { version = "0.12" }
+
+# ── Dev Dependencies ──────────────────────────────────────────────────────────
+
+[dev-dependencies]
+# Test utilities
+tokio = { version = "1", features = ["full"] }
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
+
+# ── Release Profile (WASM Size Optimization) ──────────────────────────────────
+
+[profile.release]
+opt-level = "z"          # Optimizes for binary size (most aggressive)
+lto = true               # Deep cross-crate Link Time Optimization
+codegen-units = 1        # Maximize LTO optimization scope
+panic = "abort"          # Removes unwinding tables (saves ~150-300KB)
+strip = true             # Strips debug symbols and symbol tables
+overflow-checks = false  # Drops runtime integer overflow checks in release
+
+# ── WASM-Specific Profile ─────────────────────────────────────────────────────
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"          # Balanced size/speed for client SDK
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = false
