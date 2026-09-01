@@ -34,10 +34,38 @@
 //!
 //! - [`init_vault`] — Initialize contract with TFHE ServerKey
 //! - [`register_vault_ciphertext`] — Deposit encrypted balance
-//! - [`homomorphic_transfer`] — Execute blind transfer
+//! - [`homomorphic_transfer`] — Execute blind transfer (unauthenticated: any
+//!   caller who knows a sender vault ID and possesses a `ServerKey` can move
+//!   its funds)
+//! - [`register_vault_with_identity`] — Deposit encrypted balance bound to a
+//!   real `aethel-core` PLP identity projection
+//! - [`homomorphic_transfer_authenticated`] — Execute blind transfer gated on
+//!   a `aethel-core` PLP ownership proof, verified against the projection the
+//!   sender vault was registered with
 //! - [`derive_vault_id`] — Derive vault ID from PLP projection bytes
 //! - [`export_vault_state_len`] / [`export_vault_state_ptr`] — State export
 //! - [`import_vault_state`] — State import
+//!
+//! ## Identity Coupling
+//!
+//! [`homomorphic_transfer`] authorizes a transfer by possession of
+//! ciphertexts and a `ServerKey` alone — nothing checks who is asking.
+//! [`homomorphic_transfer_authenticated`] is the first operation that does:
+//! it requires a `aethel_core::plp::ZkIdentityProof` that verifies (via
+//! `aethel_core::plp::Verifier::verify`) against the sender vault's bound
+//! `EphemeralProjection`, so a caller must prove knowledge of the master
+//! secret behind the projection the vault was registered under, not merely
+//! know the vault's ID.
+//!
+//! This wires a PLP ownership proof rather than a full SAAP presentation.
+//! Both hit the same constraint: `aethel-core` deliberately exposes no public
+//! constructor for the polynomial types inside a proof or a SAAP
+//! presentation (only its own `Prover`/`credential::prove` can produce one),
+//! so neither can be deserialized from bytes submitted by an untrusted
+//! network caller with the current `aethel-core` API. Because a full SAAP
+//! presentation would face that identical wire-format gap for strictly more
+//! implementation work, the PLP proof is the smaller correct step. See
+//! `docs/ROADMAP.md` for what closing that gap would take.
 
 extern crate alloc;
 
@@ -61,6 +89,10 @@ pub const ERR_INSUFFICIENT_BALANCE: u32 = 2;
 pub const ERR_DESER: u32 = 3;
 /// Invalid key — ServerKey not initialized or invalid.
 pub const ERR_INVALID_KEY: u32 = 4;
+/// Unauthorized — the sender vault has no identity binding, the supplied
+/// projection does not match the one it was registered with, or the supplied
+/// proof does not verify against it.
+pub const ERR_UNAUTHORIZED: u32 = 5;
 
 // ── Vault State ───────────────────────────────────────────────────────────────
 
@@ -77,6 +109,12 @@ pub struct VaultState {
     pub balances: Vec<([u8; 32], Vec<u8>)>,
     /// Serialized `ServerKey` bytes (stored for native builds; unused in WASM).
     pub server_key_bytes: Option<Vec<u8>>,
+    /// Mapping of 32-byte vault IDs to the serialized `aethel-core`
+    /// `EphemeralProjection` bytes they were registered under, for vaults
+    /// registered via [`register_vault_with_identity`]. A vault registered
+    /// via the plain [`register_vault_ciphertext`] has no entry here, and
+    /// [`homomorphic_transfer_authenticated`] refuses to move its funds.
+    pub identity_projections: Vec<([u8; 32], Vec<u8>)>,
 }
 
 impl VaultState {
@@ -84,6 +122,7 @@ impl VaultState {
         VaultState {
             balances: Vec::new(),
             server_key_bytes: None,
+            identity_projections: Vec::new(),
         }
     }
 }
@@ -512,6 +551,120 @@ pub fn vault_transfer_from_bytes(
     )
 }
 
+/// High-level: read a vault's current serialized ciphertext balance, if it's registered.
+pub fn vault_get_balance(vault_id: &[u8]) -> Option<Vec<u8>> {
+    STATE.with(|s| {
+        let borrow = s.borrow();
+        let state = borrow.as_ref()?;
+        state
+            .balances
+            .iter()
+            .find(|(id, _)| id.as_slice() == vault_id)
+            .map(|(_, ct)| ct.clone())
+    })
+}
+
+/// Register a vault with an encrypted balance, bound to a real `aethel-core`
+/// PLP identity projection.
+///
+/// Unlike [`register_vault_ciphertext`], the vault ID is not caller-supplied:
+/// it is derived server-side from `projection_bytes` via [`derive_vault_id`],
+/// the same derivation the vault ID was always documented as using. That
+/// closes the gap the plain registration path leaves open, where a caller
+/// can supply any 32 bytes as a "vault ID" with nothing to check it actually
+/// came from a projection. [`homomorphic_transfer_authenticated`] checks a
+/// caller's proof against the projection stored here.
+///
+/// # Returns
+///
+/// - `Ok(vault_id)` on success
+/// - `Err(ERR_DESER)` if `projection_bytes` does not decode as an
+///   `aethel_core::EphemeralProjection`
+pub fn register_vault_with_identity(
+    projection_bytes: &[u8],
+    initial_balance_ct: &[u8],
+) -> Result<[u8; 32], u32> {
+    if aethel_core::EphemeralProjection::from_bytes(projection_bytes).is_err() {
+        return Err(ERR_DESER);
+    }
+
+    let vault_id = derive_vault_id(projection_bytes);
+
+    with_state_mut(|state| {
+        state.balances.push((vault_id, initial_balance_ct.to_vec()));
+        state
+            .identity_projections
+            .push((vault_id, projection_bytes.to_vec()));
+    });
+
+    Ok(vault_id)
+}
+
+/// Execute an authenticated homomorphic transfer.
+///
+/// Identical to [`homomorphic_transfer`] (same blind, homomorphic-select
+/// arithmetic — insufficient funds is still a silent no-op, not an error)
+/// except that it first requires proof that the caller controls the sender
+/// vault's identity:
+///
+/// 1. `sender_id` must have been registered via
+///    [`register_vault_with_identity`], and `sender_projection` must be
+///    exactly the projection it was registered with (re-checked by
+///    recomputing its byte encoding, not merely trusting the caller's claim).
+/// 2. `proof` must verify against `sender_projection` via
+///    `aethel_core::plp::Verifier::verify`.
+///
+/// Only once both hold does this fall through to the same transfer logic
+/// [`homomorphic_transfer`] uses.
+///
+/// See the module-level "Identity Coupling" docs for why this takes
+/// `sender_projection`/`proof` as native `aethel-core` values rather than raw
+/// bytes: `ZkIdentityProof` has no public byte constructor, so this entry
+/// point is reachable only by a caller linking `aethel-vault` and
+/// `aethel-core` together in the same Rust binary, not through the
+/// `extern "C"`/wasm-bindgen boundary this module's other exports use.
+///
+/// # Returns
+///
+/// - `ERR_OK` (0) on success (including insufficient-funds — blind execution)
+/// - `ERR_UNAUTHORIZED` (5) if `sender_id` has no identity binding, the
+///   binding doesn't match `sender_projection`, or `proof` fails verification
+/// - `ERR_NOT_FOUND` / `ERR_INVALID_KEY` / `ERR_DESER` as in
+///   [`homomorphic_transfer`]
+pub fn homomorphic_transfer_authenticated(
+    sender_id: &[u8; 32],
+    receiver_id: &[u8; 32],
+    transfer_ct: &[u8],
+    sender_projection: &aethel_core::EphemeralProjection,
+    proof: &aethel_core::ZkIdentityProof,
+) -> u32 {
+    let bound_projection_bytes: Option<Vec<u8>> = STATE.with(|s| {
+        let borrow = s.borrow();
+        borrow.as_ref().and_then(|state| {
+            state
+                .identity_projections
+                .iter()
+                .find(|(id, _)| id == sender_id)
+                .map(|(_, bytes)| bytes.clone())
+        })
+    });
+
+    let bound_projection_bytes = match bound_projection_bytes {
+        Some(bytes) => bytes,
+        None => return ERR_UNAUTHORIZED,
+    };
+
+    if bound_projection_bytes != sender_projection.to_bytes() {
+        return ERR_UNAUTHORIZED;
+    }
+
+    if !aethel_core::Verifier::verify(sender_projection, proof) {
+        return ERR_UNAUTHORIZED;
+    }
+
+    vault_transfer_from_bytes(sender_id, receiver_id, transfer_ct)
+}
+
 /// High-level: export vault state as bytes.
 pub fn vault_export_state() -> Vec<u8> {
     export_vault_state_inner()
@@ -553,6 +706,21 @@ pub fn wasm_vault_register(vault_id: &[u8], initial_balance_ct: &[u8]) -> u32 {
 #[wasm_bindgen]
 pub fn wasm_vault_transfer(sender_id: &[u8], receiver_id: &[u8], transfer_ct: &[u8]) -> u32 {
     vault_transfer_from_bytes(sender_id, receiver_id, transfer_ct)
+}
+
+/// Register a vault bound to an `aethel-core` PLP identity projection (WASM export).
+///
+/// Returns the derived vault ID on success, or an empty `Vec` if
+/// `projection_bytes` does not decode as an `EphemeralProjection`.
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_vault_register_with_identity(
+    projection_bytes: &[u8],
+    initial_balance_ct: &[u8],
+) -> Vec<u8> {
+    register_vault_with_identity(projection_bytes, initial_balance_ct)
+        .map(|id| id.to_vec())
+        .unwrap_or_default()
 }
 
 /// Export vault state as bytes (WASM export).

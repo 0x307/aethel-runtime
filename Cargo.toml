@@ -26,13 +26,14 @@ std = [
     "prost",
 ]
 
-# WASM-specific features: wasm-bindgen exports
-# Also enables aethel-id's wasm feature so wasm-bindgen provides the
-# global allocator and panic handler for wasm32-unknown-unknown.
+# WASM-specific features: wasm-bindgen exports.
+# wasm-bindgen itself provides the global allocator and panic handler for
+# wasm32-unknown-unknown; aethel-core has no wasm feature of its own to
+# enable (its only WebAssembly surface is the WIT component, gated behind
+# its own `component` feature, which this crate does not use).
 wasm = [
     "wasm-bindgen",
     "zeroize",
-    "aethel-id/wasm",
 ]
 
 # ── Core Dependencies (all targets) ──────────────────────────────────────────
@@ -51,12 +52,18 @@ sha3 = { version = "0.10", default-features = false }
 # Secure memory zeroization
 zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 
-# ── aethel-id (aethel-core) — PLP vault ID derivation ─────────────────────────
-# default-features = false: don't pull in aethel-id's std feature by default.
-# The wasm feature of aethel-vault enables aethel-id's wasm feature so that
-# wasm-bindgen provides the allocator and panic handler for wasm32 targets.
-[dependencies.aethel-id]
-path = "../aethel-core"
+# ── aethel-core — PLP vault ID derivation and identity verification ──────────
+# Pulled from crates.io, not a sibling-directory path dependency: a path
+# dependency requires `../aethel-core` to exist and be checked out at the
+# right commit for this crate to build at all, and silently drifts out of
+# date otherwise: this is exactly how the dependency went stale under the old
+# `aethel-id` path (renamed upstream to `aethel-core` in aethel-core commit
+# ac345e1, 2026-08-26) and broke this crate's build for weeks unnoticed.
+# default-features = false: don't pull in aethel-core's std feature; its
+# `plp`/`credential` modules are no_std + alloc, matching this crate's own
+# no_std-style module bodies.
+[dependencies.aethel-core]
+version = "0.3"
 default-features = false
 optional = false
 
@@ -67,14 +74,23 @@ optional = true
 
 # ── Native-only dependencies (non-wasm32 target) ──────────────────────────────
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# TFHE with full integer API for native builds
-tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
 # Async runtime for gRPC
 tokio = { version = "1", features = ["full"], optional = true }
 # gRPC framework
 tonic = { version = "0.11", optional = true }
 # Protocol Buffers
 prost = { version = "0.12", optional = true }
+
+# TFHE for native builds. `boolean`/`shortint`/`integer` alone are not enough:
+# `generate_keys` needs a hardware randomness seeder, which is a separate
+# opt-in feature bundle per architecture, and panics at runtime ("Unable to
+# instantiate a seeder") without one. This went unnoticed because no test
+# that would have called it was ever unignored — see tests/vault_tests.rs.
+[target.'cfg(all(not(target_arch = "wasm32"), target_arch = "x86_64"))'.dependencies]
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "x86_64"] }
+
+[target.'cfg(all(target_arch = "aarch64", unix))'.dependencies]
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "aarch64-unix"] }
 
 # ── WASM-only dependencies ────────────────────────────────────────────────────
 # NOTE: The vault contract WASM binary does NOT link tfhe directly.

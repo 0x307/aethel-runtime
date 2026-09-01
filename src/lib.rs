@@ -5,20 +5,28 @@
 //!
 //! ## Architecture
 //!
-//! Aethel-Vault implements the second of two decoupled end-states in the
-//! Aethel protocol suite:
+//! Aethel-Vault is a sibling product built on top of `aethel-core`'s
+//! identity primitives (Polymorphic Lattice Projection), not a layer inside
+//! that crate. What this crate itself implements:
 //!
-//! ```text
-//! +---------------------------------------------------------------------------------+
-//! |                          END-STATE 2: AETHEL-VAULT                              |
-//! |                (Decoupled Anonymous Quantum Wallet Storage)                     |
-//! |                                                                                 |
-//! |  - Hybrid Multi-Primitive Core (M-LWE Lattice + Syndrome Decoding Code)         |
-//! |  - On-Chain Threshold Fully Homomorphic Encryption (TFHE) Ciphertext States     |
-//! |  - Hardware Level: Silicon SRAM PUF Fuzzy Extractor (Keyless Memory)            |
-//! |  - 5D Hypercube Disjoint Path Secret Sharing Routing (Q_5 Network)              |
-//! +---------------------------------------------------------------------------------+
-//! ```
+//! - **Single-party TFHE ciphertext state.** One `ServerKey`, held by one
+//!   party, performs every homomorphic operation (`FheUint64` via
+//!   `tfhe-rs`). There is no resharing, no distributed decryption, and no
+//!   validator set — multi-party threshold FHE across a validator network is
+//!   a design target, not something this crate implements today.
+//! - **PLP-derived vault IDs**, one-way hashed from `aethel-core`
+//!   `EphemeralProjection` bytes (see [`vault::derive_vault_id`]).
+//! - **An identity-authorized transfer path**
+//!   ([`vault::homomorphic_transfer_authenticated`]) that verifies a caller's
+//!   PLP ownership proof against a vault's registered projection before
+//!   moving funds — see that function's docs for what's wired today and
+//!   `docs/ROADMAP.md` for what closing the remaining gaps would take.
+//!
+//! The 5D hypercube secret-sharing routing, SRAM PUF fuzzy extraction, and
+//! syndrome-decoding primitives described in the wider Aethel protocol
+//! whitepaper live in `aethel-core` (`htss`, and the non-default `puf`
+//! feature) or remain unimplemented research directions; none of them are
+//! part of this crate.
 //!
 //! ## Modules
 //!
@@ -97,11 +105,14 @@ pub mod sdk;
 
 pub use vault::{
     derive_vault_id,
+    homomorphic_transfer_authenticated,
+    register_vault_with_identity,
     ERR_OK,
     ERR_NOT_FOUND,
     ERR_INSUFFICIENT_BALANCE,
     ERR_DESER,
     ERR_INVALID_KEY,
+    ERR_UNAUTHORIZED,
 };
 
 /// Re-export ContractPayload for all targets.
@@ -171,6 +182,30 @@ pub fn vault_register(vault_id: &[u8], initial_balance_ct: &[u8]) -> u32 {
 #[wasm_bindgen]
 pub fn vault_transfer(sender_id: &[u8], receiver_id: &[u8], transfer_ct: &[u8]) -> u32 {
     vault::vault_transfer_from_bytes(sender_id, receiver_id, transfer_ct)
+}
+
+/// Register a vault bound to an `aethel-core` PLP identity projection (WASM export).
+///
+/// Unlike [`vault_register`], the vault ID is derived server-side from
+/// `projection_bytes` rather than caller-supplied, so it cannot be
+/// registered under an ID unrelated to the projection.
+///
+/// # Parameters
+///
+/// - `projection_bytes`: Serialized `EphemeralProjection` from aethel-core PLP.
+/// - `initial_balance_ct`: Bincode-serialized `FheUint64` initial balance ciphertext.
+///
+/// # Returns
+///
+/// The derived 32-byte vault ID, or an empty `Vec` if `projection_bytes`
+/// does not decode as an `EphemeralProjection`.
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn vault_register_with_identity(
+    projection_bytes: &[u8],
+    initial_balance_ct: &[u8],
+) -> alloc::vec::Vec<u8> {
+    vault::wasm_vault_register_with_identity(projection_bytes, initial_balance_ct)
 }
 
 /// Export the entire vault state as bytes for HelixDB persistence (WASM export).

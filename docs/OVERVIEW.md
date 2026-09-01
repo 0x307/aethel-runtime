@@ -7,6 +7,20 @@ project: "aethel-vault"
 
 # Aethel-Vault: Blind-State Quantum Wallet — Technical Overview
 
+> **Implementation status.** This document describes the target architecture
+> from the Aethel whitepaper alongside the actual current implementation, and
+> does not distinguish them consistently below — read it as a design
+> document, not a description of what ships in `src/` today. For what this
+> crate actually implements right now, see [`README.md`](../README.md) and
+> [`ROADMAP.md`](./ROADMAP.md). In short: single-party TFHE (one `ServerKey`,
+> no resharing, no distributed decryption, no validator set), PLP-derived
+> vault IDs, and one identity-authorized transfer path
+> (`homomorphic_transfer_authenticated`) verified against an `aethel-core`
+> PLP ownership proof. The 5D hypercube routing, SRAM PUF fuzzy extraction,
+> hybrid M-LWE/code-based/isogeny binding, Kolmogorov-Blind nullifier pools,
+> and ZK-STARK identity bridge described below are whitepaper-stage design
+> targets, not implemented in this crate.
+
 ## Table of Contents
 
 1. [What is Aethel-Vault?](#1-what-is-aethel-vault)
@@ -48,6 +62,9 @@ project: "aethel-vault"
 |  - 5D Hypercube Disjoint Path Secret Sharing Routing (Q_5 Network)              |
 +---------------------------------------------------------------------------------+
 ```
+
+*The diagram above is the whitepaper's target end-state, not this crate's
+current implementation — see the implementation status note above.*
 
 Aethel-Vault implements a wallet architecture where:
 
@@ -158,6 +175,12 @@ WASM Linear Memory (64 pages = 4 MB maximum):
 | Protected Output Pool | 0x300000 - 0x3FFFFF | Final SAAP proof transcript |
 +-----------------------+---------------------+-----------------------------+
 ```
+
+*This memory map is a target layout, not this crate's current build:
+`src/lib.rs` has no `#![no_std]` attribute (the `std` feature is on by
+default), there is no custom arena allocator, and there is no SRAM PUF
+buffer or SAAP proof transcript pool — vault state is an in-memory `Vec` in
+a `thread_local!`, serialized with `bincode`.*
 
 Constraints:
 - **Memory Boundary Cap**: Maximum allocation of 64 pages (4 Megabytes).
@@ -284,6 +307,13 @@ Attribute vectors stored in HelixDB are **masked with homomorphic lattice noise*
 
 ## 5. Integration with Aethel-ID
 
+*This section describes the target ZK-bridge design. What this crate
+actually implements today is narrower: `homomorphic_transfer_authenticated`
+verifies a caller's `aethel-core` PLP ownership proof against the exact
+projection a vault was registered under, via `aethel_core::plp::Verifier`.
+There is no nullifier tree, no ZK-STARK bridge, and no separate
+attestation/spend-nullifier pair as described below.*
+
 ### 5.1 Decoupling Principle
 
 Aethel-Vault and Aethel-ID share **zero mathematical relation**. They cannot be linked on-chain by:
@@ -363,14 +393,25 @@ The security of Aethel-Vault rests on:
 
 1. **TFHE Semantic Security**: Under the hardness of the Learning With Errors (LWE) problem over the Torus, `FheUint64` ciphertexts are computationally indistinguishable from uniform random noise.
 2. **M-LWE Vault ID Unlinkability**: Vault IDs derived from Polymorphic Lattice Projections satisfy `Adv_Adversary_Link(b_{τ1}, b_{τ2}) ≤ Negl(λ)` under Decision M-LWE.
-3. **Hybrid Cross-Primitive Core**: The vault's cryptographic core binds simultaneously to:
-   - **M-LWE** (Module Learning With Errors) over `R_q = Z_q[X]/(X^256 + 1)`
-   - **Code-Based** (HQC / Syndrome Decoding) or **Isogeny** (SQIsign) assumptions
-   - Breaking one layer yields zero information about the master seed.
+3. **Hybrid Cross-Primitive Core** *(design target — not implemented)*: the
+   whitepaper describes a core binding simultaneously to M-LWE (Module
+   Learning With Errors, `R_q = Z_q[X]/(X^256 + 1)`) and a Code-Based
+   (HQC/Syndrome Decoding) or Isogeny (SQIsign) assumption, so breaking one
+   layer alone yields zero information about the master seed. This crate
+   uses only `tfhe-rs` (LWE-based FHE) for balance ciphertexts and
+   `aethel-core`'s M-LWE-based PLP for identity proofs — no code-based or
+   isogeny primitive is implemented anywhere in this codebase.
 
 ---
 
 ## 7. Threat Model
+
+*The defenses in the table below are the whitepaper's target defenses, not
+all of which this crate implements. Concretely implemented today:
+`aethel-core`'s PLP uses constant-time rejection sampling (real, see its own
+docs); this crate's ephemeral vault IDs and TFHE ciphertexts are real. Not
+implemented in this crate: Kolmogorov-Blind nullifiers / ε-DP noise
+injection, SRAM PUF, first-order masking, and PRNG jitter injection.*
 
 ### 7.1 Adversary Capabilities
 
@@ -402,6 +443,13 @@ The following are **not** in Aethel-Vault's threat model (they are addressed at 
 ---
 
 ## 8. Comparative Architecture
+
+*This table compares the whitepaper's target architecture against other
+systems, not this crate's current implementation — several "Aethel-Vault"
+column claims (hybrid code-based/isogeny binding, zero HNDL surface as a
+completed property rather than a design goal) describe primitives not
+implemented here. See the implementation status note at the top of this
+document.*
 
 | Dimension / Metric | Aethel-Vault | Zcash (Halo 2 / Orchard) | Monero (CLSAG) | Zama fhEVM |
 |---|---|---|---|---|
