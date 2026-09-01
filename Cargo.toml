@@ -5,9 +5,23 @@ edition = "2021"
 description = "Aethel-Vault: Blind-state quantum wallet with TFHE homomorphic encryption"
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
-repository = "https://github.com/0x307/aethel"
+repository = "https://github.com/0x307/aethel-runtime"
 keywords = ["fhe", "homomorphic-encryption", "wasm", "post-quantum", "wallet"]
 categories = ["cryptography", "wasm"]
+
+# Not required by a Rust consumer (they build from src/), and both carry a
+# stronger permanence bar once published: dist/ includes a compiled .wasm
+# binary that goes stale the moment src/ changes (it predates this crate's
+# identity-coupling work entirely), and the two spec docs still describe
+# unimplemented target architecture (SRAM PUF, an "enclave binary" build)
+# under a caveat rather than stripped, which is a different bar than what's
+# acceptable to caveat-and-keep in the mutable git repo. Both stay in the
+# git repo for GitHub readers; neither ships in the published crate.
+exclude = [
+    "dist/",
+    "docs/TFHE-VAULT-SPEC.md",
+    "docs/WASM-DEPLOYMENT.md",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
