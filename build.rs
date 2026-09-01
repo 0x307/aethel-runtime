@@ -4,11 +4,19 @@
 // (non-WASM) targets. Skipped entirely for wasm32 targets since gRPC/HTTP2
 // is not available in WASM; the WASM build uses a JS host bridge instead.
 //
-// Additionally, this script generates the dist/ release distribution artifacts:
+// Additionally, on opt-in (AETHEL_GENERATE_DIST=1), this script regenerates
+// the dist/ release distribution artifacts:
 //   dist/aethel_vault.wasm     — compiled WASM binary (best-effort copy from target/)
-//   dist/aethel_vault.wit      — WIT interface definition (always generated)
-//   dist/aethel_vault.abi.json — ABI JSON descriptor (always generated)
-//   dist/README.md             — usage documentation (always generated)
+//   dist/aethel_vault.wit      — WIT interface definition
+//   dist/aethel_vault.abi.json — ABI JSON descriptor
+//   dist/README.md             — usage documentation
+//
+// Unconditional regeneration used to run on every build. That writes into
+// the source tree from a build script, which `cargo publish`'s verification
+// build rejects outright ("Source directory was modified by build.rs"), and
+// which pollutes `git status` with line-ending-only diffs after any local
+// build. `aethel-core` hit and fixed the identical anti-pattern in its own
+// 0.1.5; this mirrors that fix.
 
 use std::fs;
 use std::path::PathBuf;
@@ -22,9 +30,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=target/wasm32-unknown-unknown/release/aethel_vault.wasm");
     println!("cargo:rerun-if-changed=target/wasm32-unknown-unknown/debug/aethel_vault.wasm");
+    println!("cargo:rerun-if-env-changed=AETHEL_GENERATE_DIST");
 
-    // ── Dist pipeline (always runs) ───────────────────────────────────────────
-    generate_dist_artifacts();
+    // ── Dist pipeline (opt-in only) ───────────────────────────────────────────
+    if std::env::var("AETHEL_GENERATE_DIST").as_deref() == Ok("1") {
+        generate_dist_artifacts();
+    }
 
     // Skip proto compilation for WASM targets
     if target_arch == "wasm32" {

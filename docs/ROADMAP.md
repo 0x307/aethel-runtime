@@ -86,15 +86,38 @@ than aspirational (e.g. `TFHE-VAULT-SPEC.md`'s error-code table listed
 §4.1 named a `tfhe` feature that doesn't exist and described the wasm32
 contract as linking `tfhe` directly, which it never has).
 
-Separately: `build.rs` regenerates `dist/*` unconditionally on every
-`cargo build`, which makes those files show as modified after any local
-build even with no real content change (just line-ending churn under
-`core.autocrlf`). `aethel-core` hit and fixed the identical anti-pattern in
-0.1.5 (`AETHEL_GENERATE_DIST` env-gated it). Not fixed here — noticed while
-reviewing `git status` before this commit, not part of the identity-coupling
-work — but the same fix would apply.
+Separately, since fixed: `build.rs` used to regenerate `dist/*`
+unconditionally on every `cargo build`, which made those files show as
+modified after any local build (line-ending churn under `core.autocrlf`) and
+turned out to be a hard blocker, not just noise: `cargo publish --dry-run`
+failed outright with "Source directory was modified by build.rs", since a
+build script writing into the source tree is exactly what publish
+verification rejects. Now env-gated behind `AETHEL_GENERATE_DIST=1`,
+matching the identical fix `aethel-core` made in its own 0.1.5. `dist/` and
+`docs/TFHE-VAULT-SPEC.md`/`docs/WASM-DEPLOYMENT.md` are also excluded from
+what `cargo package` actually ships (`Cargo.toml`'s `exclude` list) — a
+Rust consumer builds from `src/`, and both carry a stronger permanence bar
+once published to crates.io than the mutable git repo.
 
-## 4. Not attempted in this pass, and deliberately so
+## 4. Publishing this crate to crates.io — prepped, not done
+
+The `aethel-vault` name is available on crates.io, and `cargo publish
+--dry-run` succeeds as of the fixes above. Two things intentionally left
+undone, per an explicit decision to hold off (2026-09-01):
+
+- **GitHub repo visibility.** `Cargo.toml`'s `repository` field is correct
+  now (`https://github.com/0x307/aethel-runtime` — it previously pointed at
+  a nonexistent `0x307/aethel`), but the repo itself is still private.
+  crates.io renders that field as a public link regardless of the
+  destination's visibility, so publishing before the repo goes public leaves
+  a dead link on the crate's public page. Sequence GitHub visibility before
+  (or alongside) a real `cargo publish`, not after.
+- **The actual publish.** Everything above is preparation; no version of
+  this crate has been published. `cargo login` credentials are present in
+  this environment, so a real publish needs only the go-ahead, not further
+  setup.
+
+## 5. Not attempted in this pass, and deliberately so
 
 - Wiring identity checks into every vault operation (registration,
   withdrawal, etc.) rather than just transfer. One operation is enough to
