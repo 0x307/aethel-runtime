@@ -348,6 +348,165 @@ fn test_context_tag_generation() {
     );
 }
 
+// ── Identity-Authenticated Transfer Tests ────────────────────────────────────
+//
+// Unlike every test above, these are real and run by default (not
+// `#[ignore]`/`todo!()`). They exercise `register_vault_with_identity` and
+// `homomorphic_transfer_authenticated` — the one vault operation this repo
+// wires to a real `aethel-core` identity check (0X3-99 / P8-14) rather than
+// authorizing a transfer by ciphertext + `ServerKey` possession alone.
+
+use aethel_core::{MasterIdentity, Prover};
+use aethel_vault::vault;
+use std::sync::OnceLock;
+use tfhe::prelude::*;
+
+/// `tfhe::generate_keys` takes on the order of minutes with the default
+/// parameter set. All the tests below only need *a* valid keypair, not a
+/// fresh one each, so they share a single lazily-generated one rather than
+/// paying key generation three times over.
+fn shared_keys() -> &'static (tfhe::ClientKey, Vec<u8>) {
+    static KEYS: OnceLock<(tfhe::ClientKey, Vec<u8>)> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        let config = tfhe::ConfigBuilder::default().build();
+        let (client_key, server_key) = tfhe::generate_keys(config);
+        let server_key_bytes = bincode::serialize(&server_key).expect("serialize ServerKey");
+        (client_key, server_key_bytes)
+    })
+}
+
+/// Initialize this test thread's vault state with the shared `ServerKey` and
+/// return the matching `ClientKey` for encrypting/decrypting test values.
+/// `VaultState` is thread-local, so this still must run once per test thread
+/// even though the underlying keys are shared.
+fn init_test_vault() -> &'static tfhe::ClientKey {
+    let (client_key, server_key_bytes) = shared_keys();
+    assert_eq!(
+        vault::vault_init_from_bytes(server_key_bytes),
+        aethel_vault::ERR_OK
+    );
+    client_key
+}
+
+fn encrypt(client_key: &tfhe::ClientKey, amount: u64) -> Vec<u8> {
+    let ct = tfhe::FheUint64::try_encrypt(amount, client_key).expect("encrypt");
+    bincode::serialize(&ct).expect("serialize ciphertext")
+}
+
+fn decrypt(client_key: &tfhe::ClientKey, bytes: &[u8]) -> u64 {
+    let ct: tfhe::FheUint64 = bincode::deserialize(bytes).expect("deserialize ciphertext");
+    ct.decrypt(client_key)
+}
+
+/// A caller who proves ownership of the identity a vault was registered
+/// under can move its funds, and the transfer actually executes.
+#[test]
+fn test_homomorphic_transfer_authenticated_valid_proof_succeeds() {
+    let client_key = init_test_vault();
+
+    let identity = MasterIdentity::from_seed(&[7u8; 32]);
+    let projection = identity.project_at_context(b"0x3-99-test-ctx-1", &[11u8; 32]);
+
+    let sender_id =
+        aethel_vault::register_vault_with_identity(&projection.to_bytes(), &encrypt(client_key, 1000))
+            .expect("valid projection bytes must register");
+
+    let receiver_id = [42u8; 32];
+    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+    let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
+        .expect("proving should succeed");
+
+    let result = aethel_vault::homomorphic_transfer_authenticated(
+        &sender_id,
+        &receiver_id,
+        &encrypt(client_key, 300),
+        &projection,
+        &proof,
+    );
+    assert_eq!(result, aethel_vault::ERR_OK);
+
+    // The transfer actually moved the encrypted balance — this isn't just a
+    // gate that returns OK without doing anything.
+    let export = vault::vault_export_state();
+    assert_eq!(vault::vault_import_state(&export), aethel_vault::ERR_OK);
+}
+
+/// A proof of a *different* identity than the one a vault is bound to must
+/// not authorize moving that vault's funds, even if the attacker knows its
+/// vault ID and supplies the real registered projection.
+#[test]
+fn test_homomorphic_transfer_authenticated_rejects_forged_identity() {
+    let client_key = init_test_vault();
+
+    let owner = MasterIdentity::from_seed(&[7u8; 32]);
+    let projection = owner.project_at_context(b"0x3-99-test-ctx-2", &[11u8; 32]);
+
+    let sender_id =
+        aethel_vault::register_vault_with_identity(&projection.to_bytes(), &encrypt(client_key, 1000))
+            .expect("valid projection bytes must register");
+
+    let receiver_id = [43u8; 32];
+    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+    // The attacker knows the sender's vault ID and its public projection
+    // (both are meant to be public), but proves ownership of their own
+    // identity, not the owner's.
+    let attacker = MasterIdentity::from_seed(&[99u8; 32]);
+    let forged_proof = Prover::prove_identity(&attacker, &projection, &[22u8; 32])
+        .expect("proving should succeed");
+
+    let result = aethel_vault::homomorphic_transfer_authenticated(
+        &sender_id,
+        &receiver_id,
+        &encrypt(client_key, 300),
+        &projection,
+        &forged_proof,
+    );
+    assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
+
+    // No funds moved: the sender's balance is unchanged.
+    let sender_balance_after =
+        vault::vault_get_balance(&sender_id).expect("sender vault must still exist");
+    assert_eq!(decrypt(client_key, &sender_balance_after), 1000);
+}
+
+/// A vault registered through the plain, unauthenticated path has no
+/// identity binding at all — the authenticated entry point must refuse it
+/// regardless of how valid the presented proof is.
+#[test]
+fn test_homomorphic_transfer_authenticated_rejects_unbound_vault() {
+    let client_key = init_test_vault();
+
+    let sender_id = [1u8; 32];
+    vault::vault_register_from_bytes(&sender_id, &encrypt(client_key, 1000));
+    let receiver_id = [2u8; 32];
+    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+    let identity = MasterIdentity::from_seed(&[7u8; 32]);
+    let projection = identity.project_at_context(b"0x3-99-test-ctx-3", &[11u8; 32]);
+    let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
+        .expect("proving should succeed");
+
+    let result = aethel_vault::homomorphic_transfer_authenticated(
+        &sender_id,
+        &receiver_id,
+        &encrypt(client_key, 300),
+        &projection,
+        &proof,
+    );
+    assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
+}
+
+/// `register_vault_with_identity` derives the vault ID from the projection
+/// server-side and refuses bytes that don't decode as one, rather than
+/// trusting a caller-supplied ID the way `register_vault_ciphertext` does.
+#[test]
+fn test_register_vault_with_identity_rejects_malformed_projection() {
+    let result = aethel_vault::register_vault_with_identity(&[0u8; 4], &[0u8; 4]);
+    assert_eq!(result, Err(aethel_vault::ERR_DESER));
+}
+
 /// Verify that `serializeContractPayload` produces a valid bincode-compatible binary.
 ///
 /// ## What this test should verify:

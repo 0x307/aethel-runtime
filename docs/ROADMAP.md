@@ -1,0 +1,111 @@
+# aethel-runtime Roadmap
+
+This tracks what's sequenced ahead of what in this repo, and why, so the
+tempting-to-build-first part doesn't get built first.
+
+## 1. Account de-correlation comes before wider blind-state adoption
+
+SAGP's ledger (`sagp-metering/src/ledger.rs`, a separate repo) keys accounts
+by DID and by public EVM/Solana wallet addresses. Encrypting
+`balance_micro_usdc` into an `FheUint64` hides transaction *amounts*. It does
+nothing for the transaction *graph*: a public chain address is maximally
+correlatable by design, so every transfer between two encrypted-balance
+accounts is still visible as an edge between two known addresses.
+
+**Blind state is only meaningful once the account is no longer keyed by a
+correlatable public identifier.** Encrypting the balance is the demonstrable,
+easy-to-build-first part of this arc; building it first would look like the
+privacy property had shipped when only the amount-hiding half had. The
+de-correlation work (replacing public-address account keys with something
+that isn't trivially linkable, presumably PLP-projection-derived vault IDs
+used consistently instead of addresses) is sequenced ahead of any broader
+rollout of the blind-state balance path, not the other way around. This repo
+does not attempt that work; it is called out here so the next person doesn't
+reach for the encrypted-balance part first because it's the one with a demo.
+
+## 2. Wiring an untrusted network caller's identity proof into the vault
+
+`homomorphic_transfer_authenticated` (`src/vault.rs`) verifies a
+`aethel_core::plp::ZkIdentityProof` against a vault's registered
+`EphemeralProjection` via `aethel_core::plp::Verifier::verify`. That call is
+real. What it does not yet support is a proof arriving as bytes over a
+network from an untrusted caller, and that's a real gap, not a small one:
+
+`aethel-core`'s `Poly` type (the field type inside `ZkIdentityProof`,
+`EphemeralProjection.matrix_a`/`public_b`, and SAAP's `Polynomial`) has no
+public constructor outside the crate. `coeffs` is `pub(crate)`; the only way
+to get a `Poly` with attacker-influenced coefficients is to be code that
+lives inside `aethel-core` itself, e.g. `component.rs`'s
+`zk_proof_from_wit`. This looks deliberate — a type that can only be produced
+by the crate's own proving/verifying algorithms cannot be handed a
+fabricated proof at the type level, regardless of what a calling crate's own
+validation logic does or doesn't check. `EphemeralProjection` is the
+exception: it has `to_bytes`/`from_bytes` because publishing a projection
+is exactly what it's for. `ZkIdentityProof` (and SAAP's `SaapPresentation`)
+do not, because unlike a projection, a proof is meant to be *produced*, not
+*asserted*.
+
+Two ways to close this, neither attempted here:
+
+- **Upstream `aethel-core` change.** Add a validated byte codec for
+  `ZkIdentityProof` (and, if the SAAP path is wanted instead, for
+  `SaapPresentation`/`saap::Polynomial`) analogous to
+  `EphemeralProjection::to_bytes`/`from_bytes` — decode-then-validate, not a
+  raw field copy, so an out-of-range coefficient is rejected the same way
+  `EphemeralProjection::from_bytes` rejects a too-short buffer today.
+- **Host-import delegation**, matching the pattern already used for FHE:
+  this crate's WASM binary delegates `host_fhe_sub`/`_add`/`_ge`/`_select` to
+  the wasmer.io host because those operations don't belong inside the
+  contract's own sandboxed state machine. Identity verification could work
+  the same way: the host (which, unlike this contract's wasm32 binary, *can*
+  run `wasmtime` and load `aethel-core`'s compiled WIT component) verifies a
+  submitted proof against a projection through the `aethel:core` component
+  world and calls a `host_identity_verify(projection_bytes, proof_bytes) ->
+  bool` import, mirroring `host_fhe_zero`'s shape. This avoids needing a new
+  `aethel-core` release but adds a host-side dependency this contract
+  doesn't otherwise have.
+
+Until one of those lands, `homomorphic_transfer_authenticated` is reachable
+only by a caller that links `aethel-vault` and `aethel-core` together in the
+same Rust binary and produces the proof in-process (e.g. via
+`aethel_core::plp::Prover::prove_identity`) — a native validator or gateway
+service is the realistic shape of that caller, not a wallet submitting a
+proof over the wire.
+
+## 3. Doc debt beyond README.md and the crate-level doc comment
+
+`README.md` and `src/lib.rs`'s crate doc comment now say plainly that this
+crate is single-party FHE and describe only what it actually implements.
+`docs/OVERVIEW.md`, `docs/TFHE-VAULT-SPEC.md`, and `docs/WASM-DEPLOYMENT.md`
+still were not touched in this pass and still describe SRAM PUF fuzzy
+extraction, 5D hypercube secret-sharing routing, and threshold FHE as if
+they were part of this crate's implementation (memory-map tables with PUF
+buffer offsets, an M-LWE+TFHE+PUF layer diagram, code-based/isogeny
+assumption discussion). None of that exists in `src/`. These are larger,
+pre-existing spec documents; correcting them is a bigger editing pass than
+this fix and was left out to avoid scope creep, but they carry the same
+overclaim the README and crate doc did and should get the same treatment.
+
+Separately: `build.rs` regenerates `dist/*` unconditionally on every
+`cargo build`, which makes those files show as modified after any local
+build even with no real content change (just line-ending churn under
+`core.autocrlf`). `aethel-core` hit and fixed the identical anti-pattern in
+0.1.5 (`AETHEL_GENERATE_DIST` env-gated it). Not fixed here — noticed while
+reviewing `git status` before this commit, not part of the identity-coupling
+work — but the same fix would apply.
+
+## 4. Not attempted in this pass, and deliberately so
+
+- Wiring identity checks into every vault operation (registration,
+  withdrawal, etc.) rather than just transfer. One operation is enough to
+  prove the pattern works; wiring all of them multiplies the surface area of
+  a decision (PLP proof vs. full SAAP presentation vs. host-delegated
+  verification) that isn't settled yet.
+- Full SAAP presentation verification (`aethel_core::credential::verify`)
+  instead of a bare PLP ownership proof. It hits the identical
+  no-external-constructor wall described above for `saap::Polynomial`
+  (`SaapPresentation`'s field type), for materially more implementation
+  work: an `IssuerParams`, a `Credential`, and a `BlindedCredential`, plus
+  four distinct freshness-critical randomness values, versus one proof and
+  one projection for the PLP path. If a future consumer needs selective
+  attribute disclosure, revisit; the ownership-only case does not.
