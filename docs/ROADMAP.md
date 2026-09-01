@@ -99,23 +99,19 @@ what `cargo package` actually ships (`Cargo.toml`'s `exclude` list) — a
 Rust consumer builds from `src/`, and both carry a stronger permanence bar
 once published to crates.io than the mutable git repo.
 
-## 4. Publishing this crate to crates.io — prepped, not done
+## 4. Published to crates.io (2026-09-01)
 
-The `aethel-vault` name is available on crates.io, and `cargo publish
---dry-run` succeeds as of the fixes above. Two things intentionally left
-undone, per an explicit decision to hold off (2026-09-01):
+`aethel-vault` 0.1.0 is live on crates.io. Sequencing: GitHub repo
+visibility was flipped to public first (`0x307/aethel-runtime`, alongside
+`aethel-core` and the SDK), then the crate was published, so
+`Cargo.toml`'s `repository` link resolves rather than 404ing.
 
-- **GitHub repo visibility.** `Cargo.toml`'s `repository` field is correct
-  now (`https://github.com/0x307/aethel-runtime` — it previously pointed at
-  a nonexistent `0x307/aethel`), but the repo itself is still private.
-  crates.io renders that field as a public link regardless of the
-  destination's visibility, so publishing before the repo goes public leaves
-  a dead link on the crate's public page. Sequence GitHub visibility before
-  (or alongside) a real `cargo publish`, not after.
-- **The actual publish.** Everything above is preparation; no version of
-  this crate has been published. `cargo login` credentials are present in
-  this environment, so a real publish needs only the go-ahead, not further
-  setup.
+One retry needed: the first `cargo publish` attempt was rejected outright by
+the registry — `"homomorphic-encryption"` in `keywords` is 22 characters,
+over crates.io's 20-character keyword limit. Nothing was uploaded on that
+attempt (it fails validation before accepting the upload). Fixed by
+replacing it with `"encryption"` (the existing `"fhe"` keyword already
+covers the distinction).
 
 ## 5. Not attempted in this pass, and deliberately so
 
