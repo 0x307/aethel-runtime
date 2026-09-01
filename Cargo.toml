@@ -6,7 +6,7 @@ description = "Aethel-Vault: Blind-state quantum wallet with TFHE homomorphic en
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
 repository = "https://github.com/0x307/aethel-runtime"
-keywords = ["fhe", "homomorphic-encryption", "wasm", "post-quantum", "wallet"]
+keywords = ["fhe", "encryption", "wasm", "post-quantum", "wallet"]
 categories = ["cryptography", "wasm"]
 
 # Not required by a Rust consumer (they build from src/), and both carry a
