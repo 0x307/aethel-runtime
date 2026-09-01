@@ -72,19 +72,33 @@ same Rust binary and produces the proof in-process (e.g. via
 service is the realistic shape of that caller, not a wallet submitting a
 proof over the wire.
 
-## 3. Doc debt beyond README.md and the crate-level doc comment
+## 3. Doc debt beyond README.md and the crate-level doc comment — addressed
 
-`README.md` and `src/lib.rs`'s crate doc comment now say plainly that this
-crate is single-party FHE and describe only what it actually implements.
-`docs/OVERVIEW.md`, `docs/TFHE-VAULT-SPEC.md`, and `docs/WASM-DEPLOYMENT.md`
-still were not touched in this pass and still describe SRAM PUF fuzzy
-extraction, 5D hypercube secret-sharing routing, and threshold FHE as if
-they were part of this crate's implementation (memory-map tables with PUF
-buffer offsets, an M-LWE+TFHE+PUF layer diagram, code-based/isogeny
-assumption discussion). None of that exists in `src/`. These are larger,
-pre-existing spec documents; correcting them is a bigger editing pass than
-this fix and was left out to avoid scope creep, but they carry the same
-overclaim the README and crate doc did and should get the same treatment.
+`README.md`, `src/lib.rs`'s crate doc comment, `docs/OVERVIEW.md`,
+`docs/TFHE-VAULT-SPEC.md`, and `docs/WASM-DEPLOYMENT.md` now all carry
+implementation-status notes distinguishing whitepaper-stage design targets
+(SRAM PUF, 5D hypercube secret-sharing routing, threshold FHE, an
+"enclave binary" build, a hybrid M-LWE+code-based/isogeny core) from what
+`src/` actually implements, with inline corrections at the specific
+concrete claims that were simply wrong rather than aspirational (e.g.
+`TFHE-VAULT-SPEC.md`'s error-code table listed 100/101/102/103, which were
+never the real values; `WASM-DEPLOYMENT.md` §4.1 named a `tfhe` feature that
+doesn't exist and described the wasm32 contract as linking `tfhe` directly,
+which it never has). Per an explicit decision, this was a caveat-and-correct
+pass, not a rewrite: the whitepaper-derived content itself stays, now
+clearly labeled as a design target rather than presented as shipped.
+
+**Provenance note, worth keeping on record:** the "5D Toric Homological
+Manifold", "Kolmogorov-Blind Nullifier Pools", and comparable terminology in
+`docs/OVERVIEW.md` traces to the private `aethel-docs` repo's
+`whitepapers/WHITEPAPER.md` and `architecture/ARCHITECTURE.md` (confirmed by
+grep for matching phrases in both repos, 2026-09-01). At that time
+`aethel-runtime` and `aethel-docs` had identical collaborator lists, so this
+wasn't crossing an access boundary — but `aethel-runtime` is slated to go
+public, at which point this content stops being internal-only by default.
+If a decision is later made to strip rather than caveat it (the path not
+taken this pass), start from the sections flagged with implementation-status
+notes in the three docs above.
 
 Separately: `build.rs` regenerates `dist/*` unconditionally on every
 `cargo build`, which makes those files show as modified after any local

@@ -7,6 +7,15 @@ project: "aethel-vault"
 
 # WASM Compilation and Deployment Guide
 
+> **Implementation status.** The actual, tested wasm32 build command for this
+> crate is `cargo build --target wasm32-unknown-unknown --no-default-features
+> --features wasm` (see [`README.md`](../README.md)). Section 4.1 below
+> describes a different, incorrect one — flagged there. Sections 6.2/6.3's
+> "enclave binary" (`#![no_std]`, custom bump allocator) and Section 7's SRAM
+> PUF memory region describe a separate bare-metal enclave target this crate
+> does not build at all today. See [`README.md`](../README.md) and
+> [`ROADMAP.md`](./ROADMAP.md) for current implementation status generally.
+
 ## Table of Contents
 
 1. [Toolchain Setup](#1-toolchain-setup)
@@ -91,12 +100,17 @@ rustflags = [
 
 ### 2.1 Build Command
 
+*Incomplete: without `--no-default-features --features wasm`, this pulls in
+the crate's default `std` feature (`tokio`, `tonic`, `prost`), which this
+project has not verified compiles for `wasm32-unknown-unknown`. The command
+below is the one actually tested — see [`README.md`](../README.md#wasm-build).*
+
 ```bash
-# Build the vault contract (no_std WASM)
-cargo build --target wasm32-unknown-unknown --release
+# Build the vault contract
+cargo build --target wasm32-unknown-unknown --no-default-features --features wasm
 
 # Build the client SDK (wasm-bindgen)
-wasm-pack build --target web --release -- --features wasm
+wasm-pack build --target web --release -- --no-default-features --features wasm
 ```
 
 ### 2.2 Compiler Flags Reference
@@ -190,6 +204,19 @@ With LTO (lto = true, codegen-units = 1):
 ## 4. Feature Pruning
 
 ### 4.1 TFHE Feature Flags
+
+*Incorrect as written, and not just stale: `tfhe` has no `wasm-api` feature
+(its actual wasm-facing features are namespaced per-engine, e.g.
+`integer-client-js-wasm-api`), and this crate's wasm32 build doesn't depend
+on `tfhe` **at all** — `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
+in `Cargo.toml` scopes it out entirely. The vault contract's wasm32 binary
+is a pure state machine that stores ciphertext bytes and delegates every
+homomorphic operation to the wasmer.io host via the `host_fhe_*` imports
+documented in [`README.md`](../README.md#wasmer-host-integration); it never
+links a TFHE implementation itself, so there is no TFHE feature set to prune
+for it. `tfhe` for native builds needs an architecture-specific seeder
+feature (`x86_64`/`aarch64-unix`) to actually run — the opposite of pruning
+it away — see `Cargo.toml`'s comment on that dependency.*
 
 Only enable the TFHE features required for the vault contract:
 
@@ -349,6 +376,11 @@ The server key (~30-50 MB) exceeds the 4MB WASM linear memory limit. This is han
 
 For the enclave binary (bare-metal, no WASM memory growth), use `PARAM_MESSAGE_1_CARRY_0` with the 3-8 MB server key.
 
+*Sections 6.2–6.3 describe a separate bare-metal "enclave binary" target
+this crate does not build. The actual `wasm32-unknown-unknown` vault
+contract has no `#![no_std]` attribute, uses the default allocator (via
+`wasm-bindgen`), and does not have an enclave build profile.*
+
 ### 6.2 `no_std` Constraints
 
 The `#![no_std]` constraint eliminates:
@@ -432,6 +464,11 @@ Address     Size        Region
 ─────────────────────────────────────────────────────────────────
 0x400000    (end)       Memory boundary (64 pages)
 ```
+
+*Target layout for the enclave binary described in §6.3, not the actual
+wasm32 vault contract, which has no SRAM PUF buffer or manually-managed
+memory regions — it uses the default `wasm-bindgen` allocator over
+ordinary WASM linear memory.*
 
 ### 7.2 Memory Constraints
 
