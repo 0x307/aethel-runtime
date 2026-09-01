@@ -5,12 +5,12 @@ tempting-to-build-first part doesn't get built first.
 
 ## 1. Account de-correlation comes before wider blind-state adoption
 
-SAGP's ledger (`sagp-metering/src/ledger.rs`, a separate repo) keys accounts
-by DID and by public EVM/Solana wallet addresses. Encrypting
-`balance_micro_usdc` into an `FheUint64` hides transaction *amounts*. It does
-nothing for the transaction *graph*: a public chain address is maximally
-correlatable by design, so every transfer between two encrypted-balance
-accounts is still visible as an edge between two known addresses.
+A downstream consumer of this crate keys accounts by DID and by public
+EVM/Solana wallet addresses. Encrypting a balance into an `FheUint64` hides
+transaction *amounts*. It does nothing for the transaction *graph*: a public
+chain address is maximally correlatable by design, so every transfer between
+two encrypted-balance accounts is still visible as an edge between two known
+addresses.
 
 **Blind state is only meaningful once the account is no longer keyed by a
 correlatable public identifier.** Encrypting the balance is the demonstrable,
@@ -74,31 +74,17 @@ proof over the wire.
 
 ## 3. Doc debt beyond README.md and the crate-level doc comment — addressed
 
-`README.md`, `src/lib.rs`'s crate doc comment, `docs/OVERVIEW.md`,
-`docs/TFHE-VAULT-SPEC.md`, and `docs/WASM-DEPLOYMENT.md` now all carry
-implementation-status notes distinguishing whitepaper-stage design targets
-(SRAM PUF, 5D hypercube secret-sharing routing, threshold FHE, an
-"enclave binary" build, a hybrid M-LWE+code-based/isogeny core) from what
-`src/` actually implements, with inline corrections at the specific
-concrete claims that were simply wrong rather than aspirational (e.g.
-`TFHE-VAULT-SPEC.md`'s error-code table listed 100/101/102/103, which were
-never the real values; `WASM-DEPLOYMENT.md` §4.1 named a `tfhe` feature that
-doesn't exist and described the wasm32 contract as linking `tfhe` directly,
-which it never has). Per an explicit decision, this was a caveat-and-correct
-pass, not a rewrite: the whitepaper-derived content itself stays, now
-clearly labeled as a design target rather than presented as shipped.
-
-**Provenance note, worth keeping on record:** the "5D Toric Homological
-Manifold", "Kolmogorov-Blind Nullifier Pools", and comparable terminology in
-`docs/OVERVIEW.md` traces to the private `aethel-docs` repo's
-`whitepapers/WHITEPAPER.md` and `architecture/ARCHITECTURE.md` (confirmed by
-grep for matching phrases in both repos, 2026-09-01). At that time
-`aethel-runtime` and `aethel-docs` had identical collaborator lists, so this
-wasn't crossing an access boundary — but `aethel-runtime` is slated to go
-public, at which point this content stops being internal-only by default.
-If a decision is later made to strip rather than caveat it (the path not
-taken this pass), start from the sections flagged with implementation-status
-notes in the three docs above.
+`README.md`, `src/lib.rs`'s crate doc comment, and `docs/OVERVIEW.md` now
+describe only what `src/` actually implements: single-party FHE, PLP-derived
+vault IDs, and the `homomorphic_transfer_authenticated` identity-proof path.
+`docs/TFHE-VAULT-SPEC.md` and `docs/WASM-DEPLOYMENT.md` carry
+implementation-status notes distinguishing the remaining design-target
+material they describe (SRAM PUF, an "enclave binary" build) from what ships,
+plus inline corrections at concrete claims that were simply wrong rather
+than aspirational (e.g. `TFHE-VAULT-SPEC.md`'s error-code table listed
+100/101/102/103, which were never the real values; `WASM-DEPLOYMENT.md`
+§4.1 named a `tfhe` feature that doesn't exist and described the wasm32
+contract as linking `tfhe` directly, which it never has).
 
 Separately: `build.rs` regenerates `dist/*` unconditionally on every
 `cargo build`, which makes those files show as modified after any local

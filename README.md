@@ -3,7 +3,7 @@
 [![IETF Draft](https://img.shields.io/badge/IETF-draft--harper--aethel--id--00-blue)](https://datatracker.ietf.org/)
 [![Crate](https://img.shields.io/badge/crate-aethel--vault-orange)](https://crates.io/)
 [![WASM](https://img.shields.io/badge/target-wasm32--unknown--unknown-green)](https://webassembly.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 **aethel-runtime** is a sibling product to `aethel-core`, built on top of it rather than a layer inside it: a single-party Fully Homomorphic Encryption (FHE) vault contract that processes encrypted balances without ever seeing plaintext values, compiled to a standalone WebAssembly binary for deployment in wasmer.io containers. It is the execution layer for blind-state balances; `aethel-core` is the identity layer it consumes, not a component it embeds. Multi-party threshold FHE across a validator network is a design target this crate does not implement — see [Architecture](#architecture).
 
@@ -217,11 +217,11 @@ aethel-runtime is designed to run alongside these independently-upgradeable shar
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Apache-2.0 — see [LICENSE](LICENSE)
 
 ## References
 
 - [IETF Draft: draft-harper-aethel-id-00](https://datatracker.ietf.org/)
 - [tfhe-rs: Fully Homomorphic Encryption](https://github.com/zama-ai/tfhe-rs)
 - [HelixDB](https://github.com/HelixDB/helix-db)
-- [Aethel Whitepaper](https://github.com/0x307/aethel-docs/blob/main/whitepapers/WHITEPAPER.md)
+- [aethel-core](https://crates.io/crates/aethel-core)
