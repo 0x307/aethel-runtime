@@ -1,12 +1,12 @@
 [package]
 name = "aethel-vault"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "Aethel-Vault: Blind-state quantum wallet with TFHE homomorphic encryption"
+description = "Post-quantum wallet vault for Rust and WASM. Balances are held and transferred as ciphertext the vault never decrypts; vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
 repository = "https://github.com/0x307/aethel-runtime"
-keywords = ["fhe", "encryption", "wasm", "post-quantum", "wallet"]
+keywords = ["wallet", "post-quantum", "wasm", "fhe", "identity"]
 categories = ["cryptography", "wasm"]
 
 # Not required by a Rust consumer (they build from src/), and both carry a
