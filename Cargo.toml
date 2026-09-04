@@ -128,6 +128,16 @@ tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
 
 # ── Release Profile (WASM Size Optimization) ──────────────────────────────────
 
+# tfhe's key generation and homomorphic operations are unusably slow when
+# compiled unoptimized: on the plain dev profile the three real vault tests
+# spend many minutes inside tfhe before the first assertion runs, which is why
+# `cargo test` looked like it hung. Optimizing dependencies while leaving this
+# crate itself unoptimized keeps the tests debuggable and lets the suite finish.
+# Profile settings only apply when this crate is the workspace root, so a
+# downstream consumer's build is unaffected.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = "z"          # Optimizes for binary size (most aggressive)
 lto = true               # Deep cross-crate Link Time Optimization
