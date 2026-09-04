@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  native:
+    name: Native build & test (default features)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fresh clone, no cache)
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (fresh, no cache)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo build --all-targets
+        run: cargo build --all-targets --locked --verbose
+
+      # Measured locally at 56s of test time once built. The job's wall clock is
+      # dominated by compiling the dependency tree at opt-level 3 (see the
+      # profile.dev.package block in Cargo.toml), which is the trade that makes
+      # the tfhe-backed tests finish at all rather than appearing to hang.
+      #
+      # 16 of the 20 tests in tests/vault_tests.rs are #[ignore] TODO stubs.
+      # This job green means the 4 identity-binding tests pass, not that the
+      # vault's homomorphic behaviour is covered.
+      - name: cargo test
+        run: cargo test --locked --verbose
+
+  # The crate's headline says it builds for WASM. Until this job existed, the
+  # only evidence for that in the repo was dist/aethel_vault.wasm, a binary
+  # checked in on 2026-08-10 that Cargo.toml's own `exclude` comment already
+  # describes as going "stale the moment src/ changes". A committed artifact
+  # cannot prove that today's source still compiles; this job can.
+  #
+  # The invocation is the one README.md and docs/WASM-DEPLOYMENT.md tell a
+  # consumer to run. Note it is --no-default-features: the default `std`
+  # feature pulls tokio/tonic for the HelixDB adapter, none of which build for
+  # wasm32.
+  wasm:
+    name: WASM target (wasm32-unknown-unknown, --no-default-features --features wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fresh clone, no cache)
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (fresh, no cache, wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: cargo build --target wasm32-unknown-unknown (debug)
+        run: |
+          cargo build --target wasm32-unknown-unknown \
+            --no-default-features --features wasm --locked --verbose
+
+      # dist/ ships the release build, so the release profile is the one whose
+      # breakage would matter, and it is the profile that exercises the
+      # opt-level="z" + LTO settings the debug build never touches.
+      - name: cargo build --target wasm32-unknown-unknown (release)
+        run: |
+          cargo build --release --target wasm32-unknown-unknown \
+            --no-default-features --features wasm --locked --verbose
+
+      # A zero-byte or missing .wasm would still leave the build "green", so
+      # assert the artifact exists and has a plausible size before believing it.
+      - name: Verify the WASM artifact exists and is non-trivial
+        run: |
+          WASM=target/wasm32-unknown-unknown/release/aethel_vault.wasm
+          if [ ! -f "$WASM" ]; then
+            echo "::error::$WASM was not produced by the release build"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM")
+          echo "aethel_vault.wasm: ${SIZE} bytes"
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "::error::$WASM is ${SIZE} bytes, far below a plausible module size"
+            exit 1
+          fi
+          echo "### WASM artifact" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`aethel_vault.wasm\`: ${SIZE} bytes (release, wasm32-unknown-unknown)" >> "$GITHUB_STEP_SUMMARY"
+
+      # Published so a reviewer can pull the module this commit actually
+      # produces, rather than reading the stale one in dist/.
+      - name: Upload the built WASM module
+        uses: actions/upload-artifact@v4
+        with:
+          name: aethel_vault-wasm-${{ github.sha }}
+          path: target/wasm32-unknown-unknown/release/aethel_vault.wasm
+          if-no-files-found: error
+
+  # Builds what a `cargo add aethel-vault` consumer actually receives, not the
+  # working tree. Cargo.toml excludes dist/ and two spec docs from the package,
+  # so the published .crate is a different file set from the repo, and only
+  # this job compiles that set. Mirrors the packaged-artifact job in pqc-sig
+  # and pqc-privacy.
+  packaged-artifact:
+    name: Packaged artifact (cargo package build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fresh clone, no cache)
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (fresh, no cache)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Inspect packaged artifact contents
+        run: cargo package --list
+
+      - name: Package crate
+        run: cargo package --no-verify --locked
+
+      - name: Extract packaged artifact
+        run: |
+          mkdir -p /tmp/aethel-vault-pkg
+          tar xzf target/package/aethel-vault-*.crate -C /tmp/aethel-vault-pkg
+          PKG_DIR=$(find /tmp/aethel-vault-pkg -mindepth 1 -maxdepth 1 -type d)
+          echo "Packaged artifact extracted to: $PKG_DIR"
+          echo "PKG_DIR=$PKG_DIR" >> "$GITHUB_ENV"
+
+      - name: Build packaged artifact
+        working-directory: ${{ env.PKG_DIR }}
+        run: cargo build --verbose

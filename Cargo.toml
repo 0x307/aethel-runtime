@@ -1,12 +1,12 @@
 [package]
 name = "aethel-vault"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "Aethel-Vault: Blind-state quantum wallet with TFHE homomorphic encryption"
+description = "Post-quantum wallet vault for Rust and WASM. Balances are held and transferred as ciphertext the vault never decrypts; vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
 repository = "https://github.com/0x307/aethel-runtime"
-keywords = ["fhe", "encryption", "wasm", "post-quantum", "wallet"]
+keywords = ["wallet", "post-quantum", "wasm", "fhe", "identity"]
 categories = ["cryptography", "wasm"]
 
 # Not required by a Rust consumer (they build from src/), and both carry a
@@ -127,6 +127,16 @@ tokio = { version = "1", features = ["full"] }
 tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
 
 # ── Release Profile (WASM Size Optimization) ──────────────────────────────────
+
+# tfhe's key generation and homomorphic operations are unusably slow when
+# compiled unoptimized: on the plain dev profile the three real vault tests
+# spend many minutes inside tfhe before the first assertion runs, which is why
+# `cargo test` looked like it hung. Optimizing dependencies while leaving this
+# crate itself unoptimized keeps the tests debuggable and lets the suite finish.
+# Profile settings only apply when this crate is the workspace root, so a
+# downstream consumer's build is unaffected.
+[profile.dev.package."*"]
+opt-level = 3
 
 [profile.release]
 opt-level = "z"          # Optimizes for binary size (most aggressive)
