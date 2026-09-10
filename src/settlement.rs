@@ -1077,6 +1077,47 @@ mod tests {
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
+    /// With no configured approver, a well-formed approval signed by an
+    /// arbitrary key must not unblock HITL (policy doc: `None` means HITL can
+    /// never be satisfied).
+    #[test]
+    fn self_signed_hitl_approval_is_refused_without_configured_approver() {
+        let signer = MockSigner::new([0x01u8; 20]);
+        let identity = Identity::generate(&[0x55u8; 32]).expect("generate");
+        let mut wallet = Wallet::new(signer, identity, test_policy(100)); // hitl_approver_pk = None
+
+        let auth = TransferWithAuthorization {
+            from: [0x01u8; 20],
+            to: [0x02u8; 20],
+            value: 500_000,
+            valid_after: 1_000,
+            valid_before: 1_000 + 3600,
+            nonce: [0x03u8; 32],
+        };
+        let digest = auth.eip712_digest(Chain::Base);
+        let rogue = Identity::generate(&[0x99u8; 32]).expect("generate");
+        let msg = crate::policy::hitl_approval_message(&digest, 500_000, 10_000);
+        let approval = HitlApproval {
+            approver_pk: rogue.public_key(),
+            signature: rogue
+                .sign_with_purpose(purpose::VAULT_HITL_APPROVAL_V1, &msg)
+                .unwrap(),
+            intent_hash: digest,
+            amount: 500_000,
+            expiry_unix: 10_000,
+        };
+
+        let result = wallet.authorize_eip3009(
+            [0x02u8; 20],
+            500_000,
+            [0x03u8; 32],
+            Chain::Base,
+            1_000,
+            Some(&approval),
+        );
+        assert_eq!(result, Err(VaultError::HitlRequired));
+    }
+
     #[test]
     fn authorize_eip3009_propagates_signer_rejection() {
         let signer = MockSigner::rejecting([0x01u8; 20]);

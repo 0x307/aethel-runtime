@@ -100,20 +100,16 @@ zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 # HITL approvals (V-1/V-4/V-5), all under the purpose-separated contexts in
 # `aethel_core::signing::purpose`. ──────────────────────────────────────────
 #
-# A path dependency, not crates.io: aethel-core 0.6.0 is a coordinated,
-# unpublished bump (root re-export removal + the A-4 wire/verify_projection
-# surface this crate's `settlement`/`policy`/`receipt` modules consume) that
-# must build against the exact sibling checkout, not whatever the registry
-# last had. `version` is also pinned so a future `cargo publish` of this
-# crate resolves against the intended release once aethel-core 0.6 actually
-# ships to crates.io; until then Cargo prefers the `path` override.
+# 0.6 is the first release with the A-4 wire/verify_projection surface and
+# the `signing::purpose` registry this crate's `settlement`/`policy`/`receipt`
+# modules consume. Resolved from crates.io, so CI and a `cargo publish`
+# build against the same published artifact.
 #
 # default-features = false: don't pull in aethel-core's std feature; its
 # `plp`/`credential`/`signing`/`wire` modules are no_std + alloc, matching
 # this crate's own no_std-style module bodies.
 [dependencies.aethel-core]
 version = "0.6"
-path = "../aethel-core"
 default-features = false
 optional = false
 

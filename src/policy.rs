@@ -246,8 +246,13 @@ impl HitlApproval {
     ///
     /// Returns `Ok(true)` only if: `now_unix < expiry_unix`, `intent_hash`
     /// and `amount` match exactly, `approver_pk` matches
-    /// `expected_approver_pk` (when `Some`), and the ML-DSA-65 signature
-    /// verifies under [`purpose::VAULT_HITL_APPROVAL_V1`].
+    /// `expected_approver_pk`, and the ML-DSA-65 signature verifies under
+    /// [`purpose::VAULT_HITL_APPROVAL_V1`].
+    ///
+    /// `expected_approver_pk == None` always returns `Ok(false)`, matching
+    /// [`SpendPolicy::hitl_approver_pk`]'s contract that `None` means HITL
+    /// can never be satisfied. Accepting any key there would let the caller
+    /// self-approve with a freshly generated identity.
     ///
     /// `Ok(false)` is a verdict (a well-formed approval that simply does
     /// not satisfy this request); `Err` is reserved for a malformed key or
@@ -265,10 +270,9 @@ impl HitlApproval {
         if &self.intent_hash != expected_intent_hash || self.amount != expected_amount {
             return Ok(false);
         }
-        if let Some(expected_pk) = expected_approver_pk {
-            if self.approver_pk != expected_pk {
-                return Ok(false);
-            }
+        match expected_approver_pk {
+            Some(expected_pk) if self.approver_pk == expected_pk => {}
+            _ => return Ok(false),
         }
         let msg = hitl_approval_message(&self.intent_hash, self.amount, self.expiry_unix);
         aethel_core::signing::verify_with_purpose(
@@ -474,7 +478,12 @@ mod tests {
             expiry_unix: expiry,
         };
         assert_eq!(
-            approval.verify(&intent_hash, amount, None, expiry /* now == expiry */),
+            approval.verify(
+                &intent_hash,
+                amount,
+                Some(&approver.public_key()),
+                expiry /* now == expiry */
+            ),
             Ok(false)
         );
     }
@@ -497,7 +506,7 @@ mod tests {
         };
         // Verifying against a larger requested amount than the approval covers.
         assert_eq!(
-            approval.verify(&intent_hash, 600_000, None, 1_000),
+            approval.verify(&intent_hash, 600_000, Some(&approver.public_key()), 1_000),
             Ok(false)
         );
     }

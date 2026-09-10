@@ -25,11 +25,17 @@ persisted `VaultState` snapshot format changed, and one type was renamed
   ServerKey now lives only in a process-local, never-serialized runtime
   structure; call `init_vault` again after every `import_vault_state`.
 - **`aethel-core` dependency bumped to 0.6** (from the previously-pinned
-  `0.3`), resolved via a `path = "../aethel-core"` sibling-directory
-  dependency (see `Cargo.toml`'s dependency comment for why: 0.6.0 is an
-  unpublished, coordinated bump). `aethel-core` 0.6.0 removed its root
+  `0.3`), resolved from crates.io. `aethel-core` 0.6.0 removed its root
   re-export of `sampling::{PlpProof, RejectionError, VectorK}` and added
   the `wire`/`verify_projection` surface this crate's new modules consume.
+
+### Fixed
+
+- **HITL approval fails closed when no approver is configured.**
+  `HitlApproval::verify` skipped the approver-key check when
+  `SpendPolicy::hitl_approver_pk` was `None`, so an approval signed by any
+  freshly generated key unblocked a spend above `hitl_above`. `None` now
+  refuses every approval, matching the field's documented contract.
 
 ### Added
 
