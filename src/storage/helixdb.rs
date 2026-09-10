@@ -90,7 +90,11 @@ impl Vector256 {
     ///
     /// Panics if `elements.len() != 256`.
     pub fn new(elements: Vec<f32>) -> Self {
-        assert_eq!(elements.len(), 256, "Vector256 must have exactly 256 elements");
+        assert_eq!(
+            elements.len(),
+            256,
+            "Vector256 must have exactly 256 elements"
+        );
         Self { elements }
     }
 
@@ -98,7 +102,11 @@ impl Vector256 {
     ///
     /// Centered reduction: coefficients > Q/2 are mapped to negative range.
     pub fn from_mlwe_coeffs(coeffs: &[i32], q: i32) -> Self {
-        assert_eq!(coeffs.len(), 256, "M-LWE coefficient vector must have 256 elements");
+        assert_eq!(
+            coeffs.len(),
+            256,
+            "M-LWE coefficient vector must have 256 elements"
+        );
         let half_q = q / 2;
         let elements: Vec<f32> = coeffs
             .iter()
@@ -239,10 +247,7 @@ impl HelixDbAdapter {
     /// # Errors
     ///
     /// Returns a `HelixError` if the operation fails.
-    pub async fn upsert_state_node(
-        &self,
-        node: StateNodePayload,
-    ) -> Result<String, HelixError> {
+    pub async fn upsert_state_node(&self, node: StateNodePayload) -> Result<String, HelixError> {
         // TODO: Implement via tonic gRPC:
         //
         // use crate::storage::proto::aethel_helix::{StateNodeRequest};
@@ -436,8 +441,8 @@ impl HelixDbAdapter {
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_stub {
     use super::{StateNodePayload, Vector256};
-    use core::cell::RefCell;
     use alloc::vec::Vec;
+    use core::cell::RefCell;
 
     extern crate alloc;
 

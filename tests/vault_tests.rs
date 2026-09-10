@@ -183,9 +183,7 @@ fn test_homomorphic_transfer_insufficient_funds() {
 #[test]
 #[ignore = "TODO: Implement unknown sender vault error test"]
 fn test_homomorphic_transfer_unknown_sender() {
-    todo!(
-        "Implement: homomorphic_transfer returns 102 for unregistered sender vault ID"
-    );
+    todo!("Implement: homomorphic_transfer returns 102 for unregistered sender vault ID");
 }
 
 /// Verify that `homomorphic_transfer` returns error code 103 for unknown receiver.
@@ -196,9 +194,7 @@ fn test_homomorphic_transfer_unknown_sender() {
 #[test]
 #[ignore = "TODO: Implement unknown receiver vault error test"]
 fn test_homomorphic_transfer_unknown_receiver() {
-    todo!(
-        "Implement: homomorphic_transfer returns 103 for unregistered receiver vault ID"
-    );
+    todo!("Implement: homomorphic_transfer returns 103 for unregistered receiver vault ID");
 }
 
 /// Verify that `homomorphic_transfer` returns error code 100 when ServerKey is not initialized.
@@ -348,179 +344,430 @@ fn test_context_tag_generation() {
     );
 }
 
-// ── Identity-Authenticated Transfer Tests ────────────────────────────────────
+// ── Identity-Authenticated Transfer Tests (fhe-state feature) ───────────────
 //
-// Unlike every test above, these are real and run by default (not
-// `#[ignore]`/`todo!()`). They exercise `register_vault_with_identity` and
-// `homomorphic_transfer_authenticated` — the one vault operation this repo
-// wires to a real `aethel-core` identity check (0X3-99 / P8-14) rather than
-// authorizing a transfer by ciphertext + `ServerKey` possession alone.
+// Unlike every test above, these are real and run by default under the
+// `fhe-state` feature (not `#[ignore]`/`todo!()`). They exercise
+// `register_vault_with_identity` and `homomorphic_transfer_authenticated` —
+// the one vault operation this repo wires to a real `aethel-core` identity
+// check (0X3-99 / P8-14) rather than authorizing a transfer by ciphertext +
+// `ServerKey` possession alone.
+//
+// SAGP-PG-001 V-3: these tests require the confidential-ledger state
+// machine (`VaultState`, `init_vault`, `homomorphic_transfer_authenticated`,
+// etc.), all of which are gated behind `fhe-state` now that `signer` is the
+// default feature. Run with `cargo test --features fhe-state`. The whole
+// section lives inside one `#[cfg(feature = "fhe-state")]` module because
+// an inner `#![cfg(...)]` attribute is only permitted at the very start of
+// a file, and this file has real tests above this point.
+#[cfg(feature = "fhe-state")]
+mod fhe_state_tests {
 
-use aethel_core::{MasterIdentity, Prover};
-use aethel_vault::vault;
-use std::sync::OnceLock;
-use tfhe::prelude::*;
+    use aethel_core::wire::{encode_projection, encode_proof};
+    use aethel_core::{MasterIdentity, Prover};
+    use aethel_vault::vault;
+    use std::sync::OnceLock;
+    use tfhe::prelude::*;
 
-/// `tfhe::generate_keys` takes on the order of minutes with the default
-/// parameter set. All the tests below only need *a* valid keypair, not a
-/// fresh one each, so they share a single lazily-generated one rather than
-/// paying key generation three times over.
-fn shared_keys() -> &'static (tfhe::ClientKey, Vec<u8>) {
-    static KEYS: OnceLock<(tfhe::ClientKey, Vec<u8>)> = OnceLock::new();
-    KEYS.get_or_init(|| {
-        let config = tfhe::ConfigBuilder::default().build();
-        let (client_key, server_key) = tfhe::generate_keys(config);
-        let server_key_bytes = bincode::serialize(&server_key).expect("serialize ServerKey");
-        (client_key, server_key_bytes)
-    })
-}
+    /// `tfhe::generate_keys` takes on the order of minutes with the default
+    /// parameter set. All the tests below only need *a* valid keypair, not a
+    /// fresh one each, so they share a single lazily-generated one rather than
+    /// paying key generation three times over.
+    fn shared_keys() -> &'static (tfhe::ClientKey, Vec<u8>) {
+        static KEYS: OnceLock<(tfhe::ClientKey, Vec<u8>)> = OnceLock::new();
+        KEYS.get_or_init(|| {
+            let config = tfhe::ConfigBuilder::default().build();
+            let (client_key, server_key) = tfhe::generate_keys(config);
+            let server_key_bytes = bincode::serialize(&server_key).expect("serialize ServerKey");
+            (client_key, server_key_bytes)
+        })
+    }
 
-/// Initialize this test thread's vault state with the shared `ServerKey` and
-/// return the matching `ClientKey` for encrypting/decrypting test values.
-/// `VaultState` is thread-local, so this still must run once per test thread
-/// even though the underlying keys are shared.
-fn init_test_vault() -> &'static tfhe::ClientKey {
-    let (client_key, server_key_bytes) = shared_keys();
-    assert_eq!(
-        vault::vault_init_from_bytes(server_key_bytes),
-        aethel_vault::ERR_OK
-    );
-    client_key
-}
+    /// Initialize this test thread's vault state with the shared `ServerKey` and
+    /// return the matching `ClientKey` for encrypting/decrypting test values.
+    /// `VaultState` is thread-local, so this still must run once per test thread
+    /// even though the underlying keys are shared.
+    fn init_test_vault() -> &'static tfhe::ClientKey {
+        let (client_key, server_key_bytes) = shared_keys();
+        assert_eq!(
+            vault::vault_init_from_bytes(server_key_bytes),
+            aethel_vault::ERR_OK
+        );
+        client_key
+    }
 
-fn encrypt(client_key: &tfhe::ClientKey, amount: u64) -> Vec<u8> {
-    let ct = tfhe::FheUint64::try_encrypt(amount, client_key).expect("encrypt");
-    bincode::serialize(&ct).expect("serialize ciphertext")
-}
+    fn encrypt(client_key: &tfhe::ClientKey, amount: u64) -> Vec<u8> {
+        let ct = tfhe::FheUint64::try_encrypt(amount, client_key).expect("encrypt");
+        bincode::serialize(&ct).expect("serialize ciphertext")
+    }
 
-fn decrypt(client_key: &tfhe::ClientKey, bytes: &[u8]) -> u64 {
-    let ct: tfhe::FheUint64 = bincode::deserialize(bytes).expect("deserialize ciphertext");
-    ct.decrypt(client_key)
-}
+    fn decrypt(client_key: &tfhe::ClientKey, bytes: &[u8]) -> u64 {
+        let ct: tfhe::FheUint64 = bincode::deserialize(bytes).expect("deserialize ciphertext");
+        ct.decrypt(client_key)
+    }
 
-/// A caller who proves ownership of the identity a vault was registered
-/// under can move its funds, and the transfer actually executes.
-#[test]
-fn test_homomorphic_transfer_authenticated_valid_proof_succeeds() {
-    let client_key = init_test_vault();
+    /// A caller who proves ownership of the identity a vault was registered
+    /// under can move its funds, and the transfer actually executes.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_valid_proof_succeeds() {
+        let client_key = init_test_vault();
 
-    let identity = MasterIdentity::from_seed(&[7u8; 32]);
-    let projection = identity.project_at_context(b"0x3-99-test-ctx-1", &[11u8; 32]);
+        let identity = MasterIdentity::from_seed(&[7u8; 32]);
+        let projection = identity.project_at_context(b"0x3-99-test-ctx-1", &[11u8; 32]);
 
-    let sender_id =
-        aethel_vault::register_vault_with_identity(&projection.to_bytes(), &encrypt(client_key, 1000))
-            .expect("valid projection bytes must register");
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
 
-    let receiver_id = [42u8; 32];
-    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+        let receiver_id = [42u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
 
-    let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
-        .expect("proving should succeed");
+        let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
+            .expect("proving should succeed");
 
-    let result = aethel_vault::homomorphic_transfer_authenticated(
-        &sender_id,
-        &receiver_id,
-        &encrypt(client_key, 300),
-        &projection,
-        &proof,
-    );
-    assert_eq!(result, aethel_vault::ERR_OK);
+        let result = aethel_vault::homomorphic_transfer_authenticated(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &projection,
+            &proof,
+        );
+        assert_eq!(result, aethel_vault::ERR_OK);
 
-    // The transfer actually moved the encrypted balance — this isn't just a
-    // gate that returns OK without doing anything.
-    let export = vault::vault_export_state();
-    assert_eq!(vault::vault_import_state(&export), aethel_vault::ERR_OK);
-}
+        // The transfer actually moved the encrypted balance — this isn't just a
+        // gate that returns OK without doing anything.
+        let export = vault::vault_export_state();
+        assert_eq!(vault::vault_import_state(&export), aethel_vault::ERR_OK);
+    }
 
-/// A proof of a *different* identity than the one a vault is bound to must
-/// not authorize moving that vault's funds, even if the attacker knows its
-/// vault ID and supplies the real registered projection.
-#[test]
-fn test_homomorphic_transfer_authenticated_rejects_forged_identity() {
-    let client_key = init_test_vault();
+    /// A proof of a *different* identity than the one a vault is bound to must
+    /// not authorize moving that vault's funds, even if the attacker knows its
+    /// vault ID and supplies the real registered projection.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_rejects_forged_identity() {
+        let client_key = init_test_vault();
 
-    let owner = MasterIdentity::from_seed(&[7u8; 32]);
-    let projection = owner.project_at_context(b"0x3-99-test-ctx-2", &[11u8; 32]);
+        let owner = MasterIdentity::from_seed(&[7u8; 32]);
+        let projection = owner.project_at_context(b"0x3-99-test-ctx-2", &[11u8; 32]);
 
-    let sender_id =
-        aethel_vault::register_vault_with_identity(&projection.to_bytes(), &encrypt(client_key, 1000))
-            .expect("valid projection bytes must register");
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
 
-    let receiver_id = [43u8; 32];
-    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+        let receiver_id = [43u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
 
-    // The attacker knows the sender's vault ID and its public projection
-    // (both are meant to be public), but proves ownership of their own
-    // identity, not the owner's.
-    let attacker = MasterIdentity::from_seed(&[99u8; 32]);
-    let forged_proof = Prover::prove_identity(&attacker, &projection, &[22u8; 32])
-        .expect("proving should succeed");
+        // The attacker knows the sender's vault ID and its public projection
+        // (both are meant to be public), but proves ownership of their own
+        // identity, not the owner's.
+        let attacker = MasterIdentity::from_seed(&[99u8; 32]);
+        let forged_proof = Prover::prove_identity(&attacker, &projection, &[22u8; 32])
+            .expect("proving should succeed");
 
-    let result = aethel_vault::homomorphic_transfer_authenticated(
-        &sender_id,
-        &receiver_id,
-        &encrypt(client_key, 300),
-        &projection,
-        &forged_proof,
-    );
-    assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
+        let result = aethel_vault::homomorphic_transfer_authenticated(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &projection,
+            &forged_proof,
+        );
+        assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
 
-    // No funds moved: the sender's balance is unchanged.
-    let sender_balance_after =
-        vault::vault_get_balance(&sender_id).expect("sender vault must still exist");
-    assert_eq!(decrypt(client_key, &sender_balance_after), 1000);
-}
+        // No funds moved: the sender's balance is unchanged.
+        let sender_balance_after =
+            vault::vault_get_balance(&sender_id).expect("sender vault must still exist");
+        assert_eq!(decrypt(client_key, &sender_balance_after), 1000);
+    }
 
-/// A vault registered through the plain, unauthenticated path has no
-/// identity binding at all — the authenticated entry point must refuse it
-/// regardless of how valid the presented proof is.
-#[test]
-fn test_homomorphic_transfer_authenticated_rejects_unbound_vault() {
-    let client_key = init_test_vault();
+    /// A vault registered through the plain, unauthenticated path has no
+    /// identity binding at all — the authenticated entry point must refuse it
+    /// regardless of how valid the presented proof is.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_rejects_unbound_vault() {
+        let client_key = init_test_vault();
 
-    let sender_id = [1u8; 32];
-    vault::vault_register_from_bytes(&sender_id, &encrypt(client_key, 1000));
-    let receiver_id = [2u8; 32];
-    vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+        let sender_id = [1u8; 32];
+        vault::vault_register_from_bytes(&sender_id, &encrypt(client_key, 1000));
+        let receiver_id = [2u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
 
-    let identity = MasterIdentity::from_seed(&[7u8; 32]);
-    let projection = identity.project_at_context(b"0x3-99-test-ctx-3", &[11u8; 32]);
-    let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
-        .expect("proving should succeed");
+        let identity = MasterIdentity::from_seed(&[7u8; 32]);
+        let projection = identity.project_at_context(b"0x3-99-test-ctx-3", &[11u8; 32]);
+        let proof = Prover::prove_identity(&identity, &projection, &[22u8; 32])
+            .expect("proving should succeed");
 
-    let result = aethel_vault::homomorphic_transfer_authenticated(
-        &sender_id,
-        &receiver_id,
-        &encrypt(client_key, 300),
-        &projection,
-        &proof,
-    );
-    assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
-}
+        let result = aethel_vault::homomorphic_transfer_authenticated(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &projection,
+            &proof,
+        );
+        assert_eq!(result, aethel_vault::ERR_UNAUTHORIZED);
+    }
 
-/// `register_vault_with_identity` derives the vault ID from the projection
-/// server-side and refuses bytes that don't decode as one, rather than
-/// trusting a caller-supplied ID the way `register_vault_ciphertext` does.
-#[test]
-fn test_register_vault_with_identity_rejects_malformed_projection() {
-    let result = aethel_vault::register_vault_with_identity(&[0u8; 4], &[0u8; 4]);
-    assert_eq!(result, Err(aethel_vault::ERR_DESER));
-}
+    /// `register_vault_with_identity` derives the vault ID from the projection
+    /// server-side and refuses bytes that don't decode as one, rather than
+    /// trusting a caller-supplied ID the way `register_vault_ciphertext` does.
+    #[test]
+    fn test_register_vault_with_identity_rejects_malformed_projection() {
+        let result = aethel_vault::register_vault_with_identity(&[0u8; 4], &[0u8; 4]);
+        assert_eq!(result, Err(aethel_vault::ERR_DESER));
+    }
 
-/// Verify that `serializeContractPayload` produces a valid bincode-compatible binary.
-///
-/// ## What this test should verify:
-/// - Serialized payload has correct length
-/// - Context tag is at offset 0, length 32
-/// - Amount length field is at offset 32, little-endian u64
-/// - Encrypted amount starts at offset 40
-/// - Target length field follows encrypted amount
-/// - Encrypted target follows target length field
-#[test]
-#[ignore = "TODO: Implement ContractPayload serialization round-trip test"]
-fn test_payload_serialization_roundtrip() {
-    todo!(
-        "Implement: ContractPayload serialization produces correct binary layout\n\
+    // ── Bytes-taking authenticated transfer (SAGP-PG-001 V-3 residual /
+    // docs/ROADMAP.md §2) ────────────────────────────────────────────────
+    //
+    // `homomorphic_transfer_authenticated_bytes` is the bytes-only
+    // counterpart of `homomorphic_transfer_authenticated` above: the
+    // projection/proof arrive as an `aethel-plp-1` wire envelope
+    // (`aethel_core::wire::{encode_projection, encode_proof}`) and are
+    // verified via `aethel_core::wire::verify_projection`, so — unlike the
+    // struct-based function — this one is reachable across the
+    // `extern "C"`/wasm boundary.
+
+    /// Honest wire-encoded projection/proof bytes authorize the same
+    /// transfer the struct-based path does, and the transfer actually
+    /// executes (not just a gate that returns OK).
+    #[test]
+    fn test_homomorphic_transfer_authenticated_bytes_valid_proof_succeeds() {
+        let client_key = init_test_vault();
+
+        let identity = MasterIdentity::from_seed(&[71u8; 32]);
+        let tau = b"0x3-99-bytes-test-ctx-1";
+        let projection = identity.project_at_context(tau, &[12u8; 32]);
+
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+
+        let receiver_id = [52u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+        let proof = Prover::prove_identity(&identity, &projection, &[23u8; 32])
+            .expect("proving should succeed");
+
+        let result = aethel_vault::homomorphic_transfer_authenticated_bytes(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &encode_projection(&projection),
+            &encode_proof(&proof),
+            tau,
+        );
+        assert_eq!(result, aethel_vault::ERR_OK);
+
+        let sender_balance_after =
+            vault::vault_get_balance(&sender_id).expect("sender vault must still exist");
+        assert_eq!(decrypt(client_key, &sender_balance_after), 700);
+        let receiver_balance_after =
+            vault::vault_get_balance(&receiver_id).expect("receiver vault must still exist");
+        assert_eq!(decrypt(client_key, &receiver_balance_after), 300);
+    }
+
+    /// A tampered proof envelope (last byte flipped) must not authorize the
+    /// transfer, whether the tamper breaks decoding or merely breaks the
+    /// cryptographic check — both map to `ERR_WIRE_VERIFY_FAILED`.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_bytes_rejects_tampered_proof() {
+        let client_key = init_test_vault();
+
+        let identity = MasterIdentity::from_seed(&[72u8; 32]);
+        let tau = b"0x3-99-bytes-test-ctx-2";
+        let projection = identity.project_at_context(tau, &[13u8; 32]);
+
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+        let receiver_id = [53u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+        let proof = Prover::prove_identity(&identity, &projection, &[24u8; 32])
+            .expect("proving should succeed");
+
+        let mut proof_bytes = encode_proof(&proof);
+        let last = proof_bytes.len() - 1;
+        proof_bytes[last] ^= 0x01;
+
+        let result = aethel_vault::homomorphic_transfer_authenticated_bytes(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &encode_projection(&projection),
+            &proof_bytes,
+            tau,
+        );
+        assert_eq!(result, aethel_vault::ERR_WIRE_VERIFY_FAILED);
+
+        let sender_balance_after =
+            vault::vault_get_balance(&sender_id).expect("sender vault must still exist");
+        assert_eq!(decrypt(client_key, &sender_balance_after), 1000);
+    }
+
+    /// A proof made for one context must not verify against a different
+    /// caller-supplied context, even though the proof itself is honest.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_bytes_rejects_wrong_context() {
+        let client_key = init_test_vault();
+
+        let identity = MasterIdentity::from_seed(&[73u8; 32]);
+        let tau = b"0x3-99-bytes-test-ctx-3";
+        let projection = identity.project_at_context(tau, &[14u8; 32]);
+
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+        let receiver_id = [54u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+        let proof = Prover::prove_identity(&identity, &projection, &[25u8; 32])
+            .expect("proving should succeed");
+
+        let result = aethel_vault::homomorphic_transfer_authenticated_bytes(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &encode_projection(&projection),
+            &encode_proof(&proof),
+            b"a-completely-different-context",
+        );
+        assert_eq!(result, aethel_vault::ERR_WIRE_VERIFY_FAILED);
+    }
+
+    /// A projection envelope with a corrupted magic header fails to decode
+    /// outright, before any cryptographic verification is attempted.
+    #[test]
+    fn test_homomorphic_transfer_authenticated_bytes_rejects_bad_magic() {
+        let client_key = init_test_vault();
+
+        let identity = MasterIdentity::from_seed(&[74u8; 32]);
+        let tau = b"0x3-99-bytes-test-ctx-4";
+        let projection = identity.project_at_context(tau, &[15u8; 32]);
+
+        let sender_id = aethel_vault::register_vault_with_identity(
+            &projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+        let receiver_id = [55u8; 32];
+        vault::vault_register_from_bytes(&receiver_id, &encrypt(client_key, 0));
+
+        let proof = Prover::prove_identity(&identity, &projection, &[26u8; 32])
+            .expect("proving should succeed");
+
+        let mut projection_bytes = encode_projection(&projection);
+        projection_bytes[0] ^= 0xFF; // corrupt the aethel-plp-1 magic header
+
+        let result = aethel_vault::homomorphic_transfer_authenticated_bytes(
+            &sender_id,
+            &receiver_id,
+            &encrypt(client_key, 300),
+            &projection_bytes,
+            &encode_proof(&proof),
+            tau,
+        );
+        assert_eq!(result, aethel_vault::ERR_WIRE_VERIFY_FAILED);
+    }
+
+    /// The struct-based and bytes-based authenticated paths must agree on
+    /// the authorization verdict and the transfer's effect for equivalent
+    /// identity/proof/transfer inputs (each exercised against its own pair
+    /// of vaults, since `register_vault_with_identity` derives the vault ID
+    /// deterministically from the projection and two vaults cannot share
+    /// one ID).
+    #[test]
+    fn test_struct_and_bytes_authenticated_paths_agree() {
+        let client_key = init_test_vault();
+
+        // Struct path.
+        let struct_identity = MasterIdentity::from_seed(&[75u8; 32]);
+        let struct_tau = b"0x3-99-bytes-test-ctx-5-struct";
+        let struct_projection = struct_identity.project_at_context(struct_tau, &[16u8; 32]);
+        let struct_proof =
+            Prover::prove_identity(&struct_identity, &struct_projection, &[27u8; 32])
+                .expect("proving should succeed");
+
+        let struct_sender_id = aethel_vault::register_vault_with_identity(
+            &struct_projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+        let struct_receiver_id = [56u8; 32];
+        vault::vault_register_from_bytes(&struct_receiver_id, &encrypt(client_key, 0));
+
+        let struct_result = aethel_vault::homomorphic_transfer_authenticated(
+            &struct_sender_id,
+            &struct_receiver_id,
+            &encrypt(client_key, 300),
+            &struct_projection,
+            &struct_proof,
+        );
+
+        // Bytes path — a different identity/context so the derived vault
+        // IDs cannot collide with the struct path's, but an equivalent
+        // honest proof/transfer.
+        let bytes_identity = MasterIdentity::from_seed(&[76u8; 32]);
+        let bytes_tau = b"0x3-99-bytes-test-ctx-5-bytes";
+        let bytes_projection = bytes_identity.project_at_context(bytes_tau, &[17u8; 32]);
+        let bytes_proof = Prover::prove_identity(&bytes_identity, &bytes_projection, &[28u8; 32])
+            .expect("proving should succeed");
+
+        let bytes_sender_id = aethel_vault::register_vault_with_identity(
+            &bytes_projection.to_bytes(),
+            &encrypt(client_key, 1000),
+        )
+        .expect("valid projection bytes must register");
+        let bytes_receiver_id = [57u8; 32];
+        vault::vault_register_from_bytes(&bytes_receiver_id, &encrypt(client_key, 0));
+
+        let bytes_result = aethel_vault::homomorphic_transfer_authenticated_bytes(
+            &bytes_sender_id,
+            &bytes_receiver_id,
+            &encrypt(client_key, 300),
+            &encode_projection(&bytes_projection),
+            &encode_proof(&bytes_proof),
+            bytes_tau,
+        );
+
+        assert_eq!(struct_result, bytes_result);
+        assert_eq!(struct_result, aethel_vault::ERR_OK);
+
+        let struct_sender_balance = decrypt(
+            client_key,
+            &vault::vault_get_balance(&struct_sender_id).expect("struct sender must exist"),
+        );
+        let bytes_sender_balance = decrypt(
+            client_key,
+            &vault::vault_get_balance(&bytes_sender_id).expect("bytes sender must exist"),
+        );
+        assert_eq!(struct_sender_balance, bytes_sender_balance);
+        assert_eq!(struct_sender_balance, 700);
+    }
+
+    /// Verify that `serializeContractPayload` produces a valid bincode-compatible binary.
+    ///
+    /// ## What this test should verify:
+    /// - Serialized payload has correct length
+    /// - Context tag is at offset 0, length 32
+    /// - Amount length field is at offset 32, little-endian u64
+    /// - Encrypted amount starts at offset 40
+    /// - Target length field follows encrypted amount
+    /// - Encrypted target follows target length field
+    #[test]
+    #[ignore = "TODO: Implement ContractPayload serialization round-trip test"]
+    fn test_payload_serialization_roundtrip() {
+        todo!(
+            "Implement: ContractPayload serialization produces correct binary layout\n\
          Steps:\n\
          1. Create ContractPayload with known context_tag, encrypted_amount, encrypted_target\n\
          2. serializeContractPayload(payload) -> bytes\n\
@@ -528,5 +775,6 @@ fn test_payload_serialization_roundtrip() {
          4. Verify bytes[32..40] == len(encrypted_amount) as u64 LE\n\
          5. Verify bytes[40..40+len(amount)] == encrypted_amount\n\
          6. Verify remaining bytes match encrypted_target with length prefix"
-    );
-}
+        );
+    }
+} // mod fhe_state_tests

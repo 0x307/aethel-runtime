@@ -1,12 +1,12 @@
 [package]
 name = "aethel-vault"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
-description = "Post-quantum wallet vault for Rust and WASM. Balances are held and transferred as ciphertext the vault never decrypts; vault IDs derive from aethel-core anonymous identities."
+description = "Post-quantum wallet vault for Rust and WASM. Thin `signer` mode (default) authorizes EIP-3009/x402 USDC transfers under a caller-supplied ECDSA-capable `SettlementSigner` and signs the intent with ML-DSA-65; confidential internal balances (`fhe-state` feature) are held and transferred as ciphertext the vault never decrypts. Vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
 repository = "https://github.com/0x307/aethel-runtime"
-keywords = ["wallet", "post-quantum", "wasm", "fhe", "identity"]
+keywords = ["wallet", "post-quantum", "wasm", "eip3009", "identity"]
 categories = ["cryptography", "wasm"]
 
 # Not required by a Rust consumer (they build from src/), and both carry a
@@ -27,18 +27,35 @@ exclude = [
 crate-type = ["cdylib", "rlib"]
 
 # ── Features ──────────────────────────────────────────────────────────────────
+#
+# SAGP-PG-001 V-3: thin `signer` mode is the default. A consumer who only
+# wants to sign an EIP-3009/x402 authorization (the Wave-1 unattended-pay
+# path) must not pay for `tfhe`, `tokio`, `tonic`, or `prost` — none of those
+# are reachable from `default`. See `docs/TFHE-VAULT-SPEC.md`'s custody
+# section and `README.md`'s "Two modes" table.
 
 [features]
-# Default: enable std for HelixDB storage adapter (async I/O, networking)
-default = ["std"]
+# Default: thin signer mode. No FHE, no HelixDB gRPC stack.
+default = ["std", "signer"]
 
-# Standard library support — required for HelixDB storage adapter
-std = [
-    "serde/std",
-    "tokio",
-    "tonic",
-    "prost",
-]
+# Standard library support. Does NOT pull tokio/tonic/prost (that is
+# `helixdb`'s job) or tfhe (that is `fhe-state`'s job).
+std = ["serde/std"]
+
+# `signer` — EIP-3009/x402 export (V-1), spend policy (V-4), and signed
+# receipts (V-5). No `tfhe`, no HelixDB. This is "the vault as signer of a
+# normal USDC wallet" the gap analysis calls the #1 utility feature.
+signer = []
+
+# `fhe-state` — the confidential-internal-balance ledger (`vault.rs`'s
+# `VaultState`/homomorphic transfer state machine) and `client.rs`'s
+# `NativeVaultClient`. Optional: FHE mode is a differentiator for agents that
+# store state on a hostile host, not a Wave-1 gate (SAGP-PG-001 §7.4).
+fhe-state = ["dep:tfhe"]
+
+# `helixdb` — the HelixDB gRPC storage adapter (`storage::helixdb`). Pulls
+# `tokio`, `tonic`, `prost`, and runs `prost-build` in `build.rs`.
+helixdb = ["std", "dep:tokio", "dep:tonic", "dep:prost"]
 
 # WASM-specific features: wasm-bindgen exports.
 # wasm-bindgen itself provides the global allocator and panic handler for
@@ -46,9 +63,17 @@ std = [
 # enable (its only WebAssembly surface is the WIT component, gated behind
 # its own `component` feature, which this crate does not use).
 wasm = [
-    "wasm-bindgen",
-    "zeroize",
+    "dep:wasm-bindgen",
+    "dep:zeroize",
 ]
+
+# `hosted` — DOES NOT EXIST AS A REAL FEATURE. Naming it is a hard
+# compile-time error (see `src/vault.rs`): aethel-vault refuses a
+# "hosted vault" mode structurally, not just by convention. The ServerKey
+# (in `fhe-state` mode) and the settlement signer (in `signer` mode) never
+# leave the agent — see the "Custody rule" section of `README.md` and
+# `docs/TFHE-VAULT-SPEC.md` (SAGP-PG-001 V-2).
+hosted = []
 
 # ── Core Dependencies (all targets) ──────────────────────────────────────────
 
@@ -60,24 +85,35 @@ bincode = { version = "1.3", default-features = false }
 # Serialization framework — no_std compatible with alloc feature
 serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
 
-# SHA3 / SHAKE-256 for vault ID derivation
+# SHA3 / SHAKE-256 for vault ID derivation, Keccak256 for EIP-712/EIP-191
+# digests (V-1). This crate never adds `k256`/`secp256k1`/`alloy`/`ethers` —
+# see `src/settlement.rs`'s module docs and
+# `tests/settlement_tests.rs::manifest_contains_no_ecdsa_crates` for why.
 sha3 = { version = "0.10", default-features = false }
 
 # Secure memory zeroization
 zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 
-# ── aethel-core — PLP vault ID derivation and identity verification ──────────
-# Pulled from crates.io, not a sibling-directory path dependency: a path
-# dependency requires `../aethel-core` to exist and be checked out at the
-# right commit for this crate to build at all, and silently drifts out of
-# date otherwise: this is exactly how the dependency went stale under the old
-# `aethel-id` path (renamed upstream to `aethel-core` in aethel-core commit
-# ac345e1, 2026-08-26) and broke this crate's build for weeks unnoticed.
+# ── aethel-core — PLP vault ID derivation, identity verification, and the
+# ML-DSA-65 `signing::Identity` this crate's own (non-settlement) signatures
+# use: spend intents, settlement receipts, wallet-bind attestations, and
+# HITL approvals (V-1/V-4/V-5), all under the purpose-separated contexts in
+# `aethel_core::signing::purpose`. ──────────────────────────────────────────
+#
+# A path dependency, not crates.io: aethel-core 0.6.0 is a coordinated,
+# unpublished bump (root re-export removal + the A-4 wire/verify_projection
+# surface this crate's `settlement`/`policy`/`receipt` modules consume) that
+# must build against the exact sibling checkout, not whatever the registry
+# last had. `version` is also pinned so a future `cargo publish` of this
+# crate resolves against the intended release once aethel-core 0.6 actually
+# ships to crates.io; until then Cargo prefers the `path` override.
+#
 # default-features = false: don't pull in aethel-core's std feature; its
-# `plp`/`credential` modules are no_std + alloc, matching this crate's own
-# no_std-style module bodies.
+# `plp`/`credential`/`signing`/`wire` modules are no_std + alloc, matching
+# this crate's own no_std-style module bodies.
 [dependencies.aethel-core]
-version = "0.3"
+version = "0.6"
+path = "../aethel-core"
 default-features = false
 optional = false
 
@@ -88,23 +124,24 @@ optional = true
 
 # ── Native-only dependencies (non-wasm32 target) ──────────────────────────────
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Async runtime for gRPC
+# Async runtime for gRPC — only reachable via the `helixdb` feature.
 tokio = { version = "1", features = ["full"], optional = true }
-# gRPC framework
+# gRPC framework — only reachable via the `helixdb` feature.
 tonic = { version = "0.11", optional = true }
-# Protocol Buffers
+# Protocol Buffers — only reachable via the `helixdb` feature.
 prost = { version = "0.12", optional = true }
 
-# TFHE for native builds. `boolean`/`shortint`/`integer` alone are not enough:
-# `generate_keys` needs a hardware randomness seeder, which is a separate
-# opt-in feature bundle per architecture, and panics at runtime ("Unable to
-# instantiate a seeder") without one. This went unnoticed because no test
-# that would have called it was ever unignored — see tests/vault_tests.rs.
+# TFHE for native builds — only reachable via the `fhe-state` feature.
+# `boolean`/`shortint`/`integer` alone are not enough: `generate_keys` needs
+# a hardware randomness seeder, which is a separate opt-in feature bundle
+# per architecture, and panics at runtime ("Unable to instantiate a seeder")
+# without one. This went unnoticed because no test that would have called
+# it was ever unignored — see tests/vault_tests.rs.
 [target.'cfg(all(not(target_arch = "wasm32"), target_arch = "x86_64"))'.dependencies]
-tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "x86_64"] }
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "x86_64"], optional = true }
 
 [target.'cfg(all(target_arch = "aarch64", unix))'.dependencies]
-tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "aarch64-unix"] }
+tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "aarch64-unix"], optional = true }
 
 # ── WASM-only dependencies ────────────────────────────────────────────────────
 # NOTE: The vault contract WASM binary does NOT link tfhe directly.
@@ -116,13 +153,16 @@ tfhe = { version = "0.7", features = ["boolean", "shortint", "integer", "aarch64
 # ── Build Dependencies ────────────────────────────────────────────────────────
 
 [build-dependencies]
-# prost-build: Generate Rust types from proto3 definitions (native only)
+# prost-build: Generate Rust types from proto3 definitions (native only).
+# `build.rs` only invokes this when the `helixdb` feature is enabled
+# (checked via the `CARGO_FEATURE_HELIXDB` env var Cargo sets), so a thin
+# `signer`-mode build does not require a `protoc` install.
 prost-build = { version = "0.12" }
 
 # ── Dev Dependencies ──────────────────────────────────────────────────────────
 
 [dev-dependencies]
-# Test utilities
+# Test utilities for the `fhe-state` test paths in tests/vault_tests.rs.
 tokio = { version = "1", features = ["full"] }
 tfhe = { version = "0.7", features = ["boolean", "shortint", "integer"] }
 

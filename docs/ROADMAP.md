@@ -3,6 +3,21 @@
 This tracks what's sequenced ahead of what in this repo, and why, so the
 tempting-to-build-first part doesn't get built first.
 
+## 0. SAGP-PG-001 gap remediation (V-1 … V-7) — landed in 0.2.0
+
+The primitive-gap-analysis items tracked against this crate
+(`aethel-docs/plan/PRIMITIVE-GAP-REMEDIATION.md` §3) are now implemented:
+
+- **V-1** `src/settlement.rs` — EIP-3009/x402 export, `Wallet::authorize_eip3009`.
+- **V-2** ServerKey custody fix in `src/vault.rs` (`RuntimeKeys`, version-prefixed snapshots, `hosted` feature is a hard compile error).
+- **V-3** feature partition — `signer` (default), `fhe-state`, `helixdb`.
+- **V-4** `src/policy.rs` — `SpendPolicy`/`PolicyState`/`HitlApproval`, enforced before any signature.
+- **V-5** `src/receipt.rs` — optional signed receipts.
+- **V-6/V-7** — naming/framing docs (README, this file's neighbors, module docs).
+
+§2 below (the identity-proof wire-format gap) and §5 (deliberately not
+attempted) are unaffected by this work and remain as written.
+
 ## 1. Account de-correlation comes before wider blind-state adoption
 
 A downstream consumer of this crate keys accounts by DID and by public
@@ -23,54 +38,60 @@ rollout of the blind-state balance path, not the other way around. This repo
 does not attempt that work; it is called out here so the next person doesn't
 reach for the encrypted-balance part first because it's the one with a demo.
 
-## 2. Wiring an untrusted network caller's identity proof into the vault
+## 2. Wiring an untrusted network caller's identity proof into the vault — landed
 
 `homomorphic_transfer_authenticated` (`src/vault.rs`) verifies a
 `aethel_core::plp::ZkIdentityProof` against a vault's registered
 `EphemeralProjection` via `aethel_core::plp::Verifier::verify`. That call is
-real. What it does not yet support is a proof arriving as bytes over a
-network from an untrusted caller, and that's a real gap, not a small one:
+real, but it is native-struct-only: `ZkIdentityProof`'s field type has no
+public constructor outside `aethel-core`, so this function is reachable only
+by a caller that links `aethel-vault` and `aethel-core` together in the same
+Rust binary and produces the proof in-process — a native validator or
+gateway service, not a wallet submitting a proof over the wire.
 
-`aethel-core`'s `Poly` type (the field type inside `ZkIdentityProof`,
-`EphemeralProjection.matrix_a`/`public_b`, and SAAP's `Polynomial`) has no
-public constructor outside the crate. `coeffs` is `pub(crate)`; the only way
-to get a `Poly` with attacker-influenced coefficients is to be code that
-lives inside `aethel-core` itself, e.g. `component.rs`'s
-`zk_proof_from_wit`. This looks deliberate — a type that can only be produced
-by the crate's own proving/verifying algorithms cannot be handed a
-fabricated proof at the type level, regardless of what a calling crate's own
-validation logic does or doesn't check. `EphemeralProjection` is the
-exception: it has `to_bytes`/`from_bytes` because publishing a projection
-is exactly what it's for. `ZkIdentityProof` (and SAAP's `SaapPresentation`)
-do not, because unlike a projection, a proof is meant to be *produced*, not
-*asserted*.
+That gap is now closed on the `aethel-core` side (A-4, 0.6.0): `aethel-core`
+shipped a validated byte codec for both `EphemeralProjection` and
+`ZkIdentityProof` under a versioned, self-describing envelope
+(`aethel_core::wire`, codec name `aethel-plp-1`) plus the byte-only entry
+point `aethel_core::wire::verify_projection(projection_bytes, proof_bytes,
+context) -> Result<bool, IdentityError>`. This crate now has the
+corresponding downstream consumer, closing out the "Downstream" note in
+A-4's plan and the `ROADMAP §2 follow-up` this file used to describe as
+future work:
 
-Two ways to close this, neither attempted here:
+- **`homomorphic_transfer_authenticated_bytes`** (`src/vault.rs`,
+  `fhe-state` feature) — takes `projection_bytes: &[u8]` / `proof_bytes:
+  &[u8]` (an `aethel-plp-1` envelope each) plus `context: &[u8]` instead of
+  native `aethel-core` structs. It decodes the projection
+  (`aethel_core::wire::decode_projection`) and checks it against the
+  projection `sender_id` was registered under (the same registration-binding
+  check the struct-based function performs), then calls
+  `aethel_core::wire::verify_projection`. `Err(_)` or `Ok(false)` from that
+  call — an undecodable proof envelope, a proof made for the wrong context,
+  or a proof that fails cryptographic verification — is rejected with a new,
+  distinct error code, `ERR_WIRE_VERIFY_FAILED` (6), so a caller can tell
+  "no such registered identity" (`ERR_UNAUTHORIZED`, unchanged) apart from
+  "the wire proof itself did not check out". Only on success does it fall
+  through to the same transfer logic `homomorphic_transfer` /
+  `homomorphic_transfer_authenticated` use — no transfer logic is
+  duplicated. A `wasm_vault_transfer_authenticated_bytes` export
+  (`wasm`+`fhe-state`) and a crate-root `vault_transfer_authenticated_bytes`
+  wrapper (`lib.rs`) are included: every argument here is already `&[u8]`,
+  so a wasm-bindgen wrapper was the natural, bytes-in/bytes-out shape.
+- Tests added under `--features fhe-state` in `tests/vault_tests.rs`'s
+  `fhe_state_tests` module: `test_homomorphic_transfer_authenticated_bytes_valid_proof_succeeds`,
+  `test_homomorphic_transfer_authenticated_bytes_rejects_tampered_proof`,
+  `test_homomorphic_transfer_authenticated_bytes_rejects_wrong_context`,
+  `test_homomorphic_transfer_authenticated_bytes_rejects_bad_magic`,
+  `test_struct_and_bytes_authenticated_paths_agree` (the last exercises both
+  entry points against equivalent identity/proof/transfer inputs, each
+  against its own pair of vaults since `register_vault_with_identity`
+  derives the vault ID deterministically from the projection, and asserts
+  both return `ERR_OK` and produce the identical balance effect).
 
-- **Upstream `aethel-core` change.** Add a validated byte codec for
-  `ZkIdentityProof` (and, if the SAAP path is wanted instead, for
-  `SaapPresentation`/`saap::Polynomial`) analogous to
-  `EphemeralProjection::to_bytes`/`from_bytes` — decode-then-validate, not a
-  raw field copy, so an out-of-range coefficient is rejected the same way
-  `EphemeralProjection::from_bytes` rejects a too-short buffer today.
-- **Host-import delegation**, matching the pattern already used for FHE:
-  this crate's WASM binary delegates `host_fhe_sub`/`_add`/`_ge`/`_select` to
-  the wasmer.io host because those operations don't belong inside the
-  contract's own sandboxed state machine. Identity verification could work
-  the same way: the host (which, unlike this contract's wasm32 binary, *can*
-  run `wasmtime` and load `aethel-core`'s compiled WIT component) verifies a
-  submitted proof against a projection through the `aethel:core` component
-  world and calls a `host_identity_verify(projection_bytes, proof_bytes) ->
-  bool` import, mirroring `host_fhe_zero`'s shape. This avoids needing a new
-  `aethel-core` release but adds a host-side dependency this contract
-  doesn't otherwise have.
-
-Until one of those lands, `homomorphic_transfer_authenticated` is reachable
-only by a caller that links `aethel-vault` and `aethel-core` together in the
-same Rust binary and produces the proof in-process (e.g. via
-`aethel_core::plp::Prover::prove_identity`) — a native validator or gateway
-service is the realistic shape of that caller, not a wallet submitting a
-proof over the wire.
+The struct-based `homomorphic_transfer_authenticated` is unchanged and
+remains available for in-process callers that already hold native
+`aethel-core` structs; the two are alternatives, not a deprecation.
 
 ## 3. Doc debt beyond README.md and the crate-level doc comment — addressed
 
