@@ -121,7 +121,9 @@
 
 extern crate alloc;
 
-#[cfg(feature = "fhe-state")]
+// `wasm` needs it too: `derive_vault_id_from_projection` returns `Vec<u8>`
+// and is exported without `fhe-state`.
+#[cfg(any(feature = "fhe-state", feature = "wasm"))]
 use alloc::vec::Vec;
 #[cfg(feature = "fhe-state")]
 use core::cell::RefCell;
