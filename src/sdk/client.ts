@@ -21,7 +21,9 @@
  * - `verifySaapProof` verifies SAAP proofs, which are an Aethel-ID primitive
  *
  * This file provides **vault-specific utilities** that extend the shared SDK:
- * - `serializeContractPayload()` — bincode-compatible payload serialization
+ * - `serializeLedgerPayload()` — bincode-compatible payload serialization
+ *   (formerly `serializeContractPayload()`, kept as a `@deprecated` alias —
+ *   see the Rust-side rename rationale in `../client.rs`, SAGP-PG-001 V-7)
  * - `generateEphemeralVaultId()` — anonymous vault ID generation
  * - `VaultSdkClient` — thin wrapper combining WASM client + HelixDB SDK
  *
@@ -84,18 +86,25 @@ export interface VaultSdkConfig {
 }
 
 /**
- * Serialized ContractPayload for submission to the vault WASM contract.
+ * Serialized LedgerPayload for submission to the vault's confidential
+ * internal ledger (not an on-chain contract — see `../vault.rs`'s
+ * "Two assets, not one" docs).
  *
- * Corresponds to the Rust `ContractPayload` struct:
+ * Corresponds to the Rust `LedgerPayload` struct (`../client.rs`):
  * ```rust
- * pub struct ContractPayload {
+ * pub struct LedgerPayload {
  *     pub context_tag: [u8; 32],
  *     pub encrypted_amount: Vec<u8>,
  *     pub encrypted_target: Vec<u8>,
  * }
  * ```
+ *
+ * Renamed from `ContractPayload` (SAGP-PG-001 V-7): the old name implied
+ * an on-chain smart contract, which this payload never was. See
+ * {@link ContractPayload} for the deprecated alias kept for source
+ * compatibility. The wire format is unchanged.
  */
-export interface ContractPayload {
+export interface LedgerPayload {
   /** 32-byte context tag τ (Uint8Array). */
   contextTag: Uint8Array;
   /** Serialized FheUint64 ciphertext for the transfer amount. */
@@ -103,6 +112,15 @@ export interface ContractPayload {
   /** Serialized FheUint64 ciphertext for the target account identifier. */
   encryptedTarget: Uint8Array;
 }
+
+/**
+ * @deprecated use {@link LedgerPayload} — this type was named
+ * `ContractPayload`, which implied an on-chain smart contract; it is the
+ * confidential *internal* ledger's payload and never touches a chain
+ * (SAGP-PG-001 V-7). Kept as an alias for source compatibility; the wire
+ * format is unchanged.
+ */
+export type ContractPayload = LedgerPayload;
 
 /**
  * Parameters for vault registration.
@@ -129,10 +147,10 @@ export interface TransferParams {
 // ── Payload Serialization ─────────────────────────────────────────────────────
 
 /**
- * Serialize a `ContractPayload` into a bincode-compatible binary format
- * for submission to the vault WASM contract.
+ * Serialize a `LedgerPayload` into a bincode-compatible binary format
+ * for submission to the vault's confidential internal ledger.
  *
- * Binary layout (little-endian):
+ * Binary layout (little-endian) — unchanged by the V-7 rename:
  * ```
  * [context_tag: 32 bytes]
  * [amount_len: 8 bytes u64 LE]
@@ -141,11 +159,11 @@ export interface TransferParams {
  * [encrypted_target: target_len bytes]
  * ```
  *
- * @param payload - The ContractPayload to serialize
+ * @param payload - The LedgerPayload to serialize
  * @returns Serialized binary payload as Uint8Array
  * @throws {Error} If context_tag is not exactly 32 bytes
  */
-export function serializeContractPayload(payload: ContractPayload): Uint8Array {
+export function serializeLedgerPayload(payload: LedgerPayload): Uint8Array {
   if (payload.contextTag.length !== CONTEXT_TAG_LENGTH) {
     throw new Error(
       `Context tag must be exactly ${CONTEXT_TAG_LENGTH} bytes, got ${payload.contextTag.length}`
@@ -180,6 +198,16 @@ export function serializeContractPayload(payload: ContractPayload): Uint8Array {
   result.set(payload.encryptedTarget, offset);
 
   return result;
+}
+
+/**
+ * @deprecated use {@link serializeLedgerPayload} — this function was named
+ * `serializeContractPayload`; the payload it serializes is the confidential
+ * *internal* ledger's, not an on-chain contract's (SAGP-PG-001 V-7). The
+ * wire format produced is unchanged.
+ */
+export function serializeContractPayload(payload: ContractPayload): Uint8Array {
+  return serializeLedgerPayload(payload);
 }
 
 // ── Vault ID Generation ───────────────────────────────────────────────────────
@@ -307,12 +335,12 @@ export class VaultSdkClient {
   }
 
   /**
-   * Build a serialized ContractPayload for vault contract submission.
+   * Build a serialized LedgerPayload for the confidential internal ledger.
    *
    * @param contextTag - 32-byte context tag τ
    * @param amount - Transfer amount as BigInt
    * @param targetAccount - Target account identifier as BigInt
-   * @returns Serialized ContractPayload as Uint8Array
+   * @returns Serialized LedgerPayload as Uint8Array
    */
   buildPayload(
     contextTag: Uint8Array,
@@ -348,7 +376,7 @@ export class VaultSdkClient {
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 export {
-  serializeContractPayload as serialize,
+  serializeLedgerPayload as serialize,
   generateEphemeralVaultId as vaultId,
   generateContextTag as contextTag,
 };

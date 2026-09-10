@@ -1,8 +1,17 @@
 // build.rs — aethel-vault build script
 //
 // Compiles the proto3 definition for the HelixDB gRPC service on native
-// (non-WASM) targets. Skipped entirely for wasm32 targets since gRPC/HTTP2
-// is not available in WASM; the WASM build uses a JS host bridge instead.
+// (non-WASM) targets, but ONLY when the `helixdb` feature is enabled
+// (SAGP-PG-001 V-3): a thin `signer`-mode build must not require a `protoc`
+// install, and `prost-build` running unconditionally was exactly what made
+// that true before this change. Cargo sets `CARGO_FEATURE_<NAME>` env vars
+// for every enabled feature of the crate being built, so
+// `CARGO_FEATURE_HELIXDB` is how a build script observes that without a
+// build-dependency on the crate's own Cargo.toml.
+//
+// Skipped entirely for wasm32 targets regardless of features, since
+// gRPC/HTTP2 is not available in WASM; the WASM build uses a JS host bridge
+// instead.
 //
 // Additionally, on opt-in (AETHEL_GENERATE_DIST=1), this script regenerates
 // the dist/ release distribution artifacts:
@@ -31,6 +40,7 @@ fn main() {
     println!("cargo:rerun-if-changed=target/wasm32-unknown-unknown/release/aethel_vault.wasm");
     println!("cargo:rerun-if-changed=target/wasm32-unknown-unknown/debug/aethel_vault.wasm");
     println!("cargo:rerun-if-env-changed=AETHEL_GENERATE_DIST");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_HELIXDB");
 
     // ── Dist pipeline (opt-in only) ───────────────────────────────────────────
     if std::env::var("AETHEL_GENERATE_DIST").as_deref() == Ok("1") {
@@ -42,11 +52,23 @@ fn main() {
         return;
     }
 
-    // Compile proto3 → Rust types using prost-build (native only)
-    // This generates the gRPC client stubs used by HelixDbAdapter.
+    // V-3: skip prost-build entirely unless the `helixdb` feature is enabled.
+    // A thin `signer`-mode build (`default`, or `--features signer`) must not
+    // require a `protoc` install on the host.
+    if std::env::var("CARGO_FEATURE_HELIXDB").is_err() {
+        println!(
+            "cargo:warning=aethel-vault: skipping proto/aethel_helix.proto codegen \
+             (helixdb feature not enabled)"
+        );
+        return;
+    }
+
+    // Compile proto3 → Rust types using prost-build (native only, `helixdb`
+    // feature only). This generates the gRPC client stubs used by
+    // HelixDbAdapter.
     //
     // Output is written to OUT_DIR and included via the `include!` macro
-    // in src/storage/helixdb.rs when the `std` feature is enabled.
+    // in src/storage/helixdb.rs when the `helixdb` feature is enabled.
     match prost_build::Config::new()
         .out_dir(std::env::var("OUT_DIR").unwrap())
         .compile_protos(&["proto/aethel_helix.proto"], &["proto/"])
@@ -57,7 +79,10 @@ fn main() {
         Err(e) => {
             // Non-fatal: proto compilation failure should not block the build
             // when tonic/prost are not yet wired up. Emit a warning instead.
-            eprintln!("cargo:warning=Failed to compile proto/aethel_helix.proto: {}", e);
+            eprintln!(
+                "cargo:warning=Failed to compile proto/aethel_helix.proto: {}",
+                e
+            );
         }
     }
 
@@ -66,8 +91,8 @@ fn main() {
 }
 
 fn generate_dist_artifacts() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set by Cargo");
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo");
     let manifest_path = PathBuf::from(&manifest_dir);
     let dist_dir = manifest_path.join("dist");
 
@@ -83,10 +108,9 @@ fn generate_dist_artifacts() {
     //
     // Each crate has its own target/ directory (no shared workspace root),
     // so the WASM binary lives at <manifest_dir>/target/wasm32-unknown-unknown/.
-    let release_wasm = manifest_path
-        .join("target/wasm32-unknown-unknown/release/aethel_vault.wasm");
-    let debug_wasm = manifest_path
-        .join("target/wasm32-unknown-unknown/debug/aethel_vault.wasm");
+    let release_wasm =
+        manifest_path.join("target/wasm32-unknown-unknown/release/aethel_vault.wasm");
+    let debug_wasm = manifest_path.join("target/wasm32-unknown-unknown/debug/aethel_vault.wasm");
 
     let wasm_dest = dist_dir.join("aethel_vault.wasm");
 

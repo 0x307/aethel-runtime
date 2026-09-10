@@ -10,6 +10,9 @@
 //! - **Raft consensus**: Distributed replication across a 3-node minimum
 //!   cluster with mTLS 1.3 inter-node security
 //!
+//! Only available with the `helixdb` feature (SAGP-PG-001 V-3): a thin
+//! `signer`-mode consumer must not pay for `tokio`/`tonic`/`prost`.
+//!
 //! ## Architecture
 //!
 //! ```text

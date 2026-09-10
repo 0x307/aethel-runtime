@@ -1,7 +1,7 @@
 ---
 title: "Aethel-Vault: TFHE Vault Technical Specification"
-version: "0.1.0-draft"
-date: "2026-08-01"
+version: "0.2.0-draft"
+date: "2026-09-10"
 project: "aethel-vault"
 ---
 
@@ -18,6 +18,27 @@ project: "aethel-vault"
 > directly. For the identity check this crate now also implements
 > (`homomorphic_transfer_authenticated`, not covered by this document at
 > all), see [`README.md`](../README.md) and [`ROADMAP.md`](./ROADMAP.md).
+>
+> **SAGP-PG-001 V-2/V-3/V-7 update (0.2.0).** Everything this document
+> describes is now gated behind the `fhe-state` Cargo feature and is the
+> **confidential internal ledger**, not a settlement asset — see
+> [`README.md`](../README.md)'s "Two assets, not one" table and
+> `src/vault.rs`'s module docs. It is emphatically **not** "on-chain" and
+> there is **no validator**: this document's remaining uses of those words
+> below (§1, §2.2) are historical framing errors, not a description of
+> anything this crate runs. Separately, §5's `ServerKey` custody claims
+> ("public eval key … can be shared") are corrected in §5.2/§5.3 below: in
+> this codebase the ServerKey is an *authorization capability* (whoever
+> holds it plus the ciphertexts can compute transfers), it is held only in
+> a process-local, never-serialized runtime structure, and it never leaves
+> the agent. There is no "hosted vault" mode — enabling a Cargo feature
+> named `hosted` is a hard compile error.
+>
+> **Confidential balance ≠ settlement asset.** This entire ledger is
+> internal to the agent's own storage. It never moves USDC. Settlement
+> (EIP-3009 on Base/Ethereum/Arbitrum) lives in `src/settlement.rs` under
+> the `signer` feature (default) and is not described by this document at
+> all — see `README.md`'s "Pay a 402 in three calls".
 
 ## Table of Contents
 
@@ -325,12 +346,27 @@ pub extern "C" fn init_vault(server_key_bytes_ptr: *const u8, len: usize) -> u32
 
 ### 5.3 Key Separation Properties
 
+> **Corrected (V-2).** The table below is the *original document's* framing
+> and is misleading about one row: `ServerKey` cannot decrypt, but that is
+> not the same claim as "safe to share." In this codebase the `ServerKey`
+> is an **authorization capability** — whoever holds it plus a vault's
+> ciphertexts can compute [`homomorphic_transfer`] for that vault, i.e.
+> move its balance. "Cannot decrypt" says nothing about "cannot spend."
+> Accordingly: the `ServerKey` is held only in a process-local,
+> never-serialized runtime structure (`vault::RuntimeKeys`), it is never
+> part of the persisted/exported `VaultState`, and `init_vault` must be
+> called again by the agent's own process after every state import — see
+> `src/vault.rs`'s "Custody rule" module docs and `README.md`. There is no
+> "hosted vault" mode: a Cargo feature literally named `hosted` is a hard
+> `compile_error!`.
+
 | Property | Guarantee |
 |---|---|
 | `ClientKey` confidentiality | Never transmitted; held only in client volatile memory |
-| `ServerKey` public safety | Contains only bootstrap/key-switching parameters; cannot decrypt |
+| `ServerKey` decryption capability | Cannot decrypt ciphertexts — but see above: this is not the same as "safe to share" or "safe to persist" |
+| `ServerKey` custody | Never leaves the agent process; never serialized into `VaultState`; no hosted mode exists |
 | `CompactPublicKey` safety | Can be shared publicly; encrypts but cannot decrypt |
-| Evaluation key decoupling | Contract stores `ServerKey`; this key allows arbitrary FHE ops but zero decryption capability |
+| Evaluation key decoupling | The confidential ledger's runtime holds `ServerKey` only in-process; this key allows arbitrary FHE ops but zero decryption capability |
 
 ### 5.4 Secure Key Cleanup
 

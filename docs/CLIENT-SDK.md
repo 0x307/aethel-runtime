@@ -27,7 +27,7 @@ The Aethel-Vault Client SDK provides client-side tooling for:
 
 1. **TFHE Key Generation**: Generating `ClientKey` + `ServerKey` + `CompactPublicKey` for the TFHE homomorphic encryption scheme.
 2. **Balance Encryption**: Encrypting plaintext `u64` balances into `FheUint64` ciphertexts using the `CompactPublicKey`.
-3. **Payload Construction**: Building serialized `ContractPayload` structures for submission to the WASM vault contract.
+3. **Payload Construction**: Building serialized `LedgerPayload` structures for submission to the confidential internal ledger (formerly named `ContractPayload`; the wire format is unchanged — see SAGP-PG-001 V-7).
 4. **Balance Decryption**: Decrypting `FheUint64` ciphertexts back to plaintext `u64` values using the `ClientKey`.
 
 The SDK is implemented in two forms:
@@ -172,11 +172,17 @@ const encryptedAmount = client.encrypt_u64_balance(BigInt(50));
 
 ## 4. Payload Construction
 
-### 4.1 ContractPayload Structure
+### 4.1 LedgerPayload Structure
+
+> Renamed from `ContractPayload` (SAGP-PG-001 V-7) — the old name implied
+> an on-chain smart contract; this is the confidential *internal* ledger's
+> payload and never touches a chain. `ContractPayload` remains available
+> as a deprecated alias on both the Rust (`src/client.rs`) and TypeScript
+> (`src/sdk/client.ts`) sides. The wire format is unchanged.
 
 ```rust
 #[derive(Serialize, Deserialize)]
-pub struct ContractPayload {
+pub struct LedgerPayload {
     pub context_tag: [u8; 32],      // 32-byte context identifier τ
     pub encrypted_amount: Vec<u8>,   // Serialized FheUint64 ciphertext
     pub encrypted_target: Vec<u8>,   // Serialized FheUint64 ciphertext
@@ -201,7 +207,7 @@ impl AethelVaultClient {
         tag_bytes.copy_from_slice(context_tag);
         let encrypted_amount = self.encrypt_u64_balance(amount)?;
         let encrypted_target = self.encrypt_u64_balance(target_account)?;
-        let payload = ContractPayload {
+        let payload = LedgerPayload {
             context_tag: tag_bytes,
             encrypted_amount,
             encrypted_target,
@@ -235,7 +241,7 @@ const payload = client.build_wasm_payload(
     transferAmount,
     targetAccountId,
 );
-// Returns: Uint8Array (serialized ContractPayload)
+// Returns: Uint8Array (serialized LedgerPayload)
 ```
 
 ### 4.4 Context Tag Generation
@@ -513,9 +519,11 @@ The `aethel-vault/src/sdk/client.ts` file provides a **vault-specific stub** tha
 // aethel-vault/src/sdk/client.ts
 
 /**
- * Serialize a ContractPayload for submission to the vault contract.
+ * Serialize a LedgerPayload for submission to the confidential internal
+ * ledger. Formerly `serializeContractPayload`, kept as a `@deprecated`
+ * alias (SAGP-PG-001 V-7); the wire format is unchanged.
  */
-export function serializeContractPayload(
+export function serializeLedgerPayload(
     contextTag: Uint8Array,
     encryptedAmount: Uint8Array,
     encryptedTarget: Uint8Array,

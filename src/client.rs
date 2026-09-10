@@ -1,15 +1,18 @@
 //! # Aethel-Vault TFHE Client SDK
 //!
 //! Client-side SDK for TFHE key generation, balance encryption, WASM payload
-//! construction, and decryption.
+//! construction, and decryption. This is the client half of the
+//! **confidential internal balance** ledger (`fhe-state` feature) — see
+//! [`crate::vault`]'s "Two assets, not one" docs for why this is not the
+//! settlement asset (USDC).
 //!
 //! ## Availability
 //!
-//! - **Native (`std` feature)**: Full implementation using `tfhe` crate directly.
-//!   Provides [`NativeVaultClient`] for Rust-native usage.
+//! - **Native (`fhe-state` feature)**: Full implementation using `tfhe`
+//!   crate directly. Provides [`NativeVaultClient`] for Rust-native usage.
 //! - **WASM (`wasm` feature)**: [`AethelVaultClient`] exported via `wasm-bindgen`
 //!   for JavaScript consumption. Uses `tfhe` JS WASM API.
-//! - **WASM without `wasm` feature**: Only [`ContractPayload`] type is available
+//! - **WASM without `wasm` feature**: Only [`LedgerPayload`] type is available
 //!   (for serialization/deserialization of payloads).
 //!
 //! ## Security
@@ -19,10 +22,12 @@
 //!
 //! ## Key Structures
 //!
-//! - [`ContractPayload`] — Serializable payload for vault contract submission
+//! - [`LedgerPayload`] — Serializable payload for the confidential-ledger
+//!   state machine (`crate::vault`). Formerly named `ContractPayload`; see
+//!   its docs for the rename rationale (V-7).
 //! - [`SecretKeyContainer`] — Zeroize-on-drop wrapper for raw key bytes (wasm feature)
 //! - [`AethelVaultClient`] — Main wasm-bindgen client struct (wasm feature)
-//! - [`NativeVaultClient`] — Native Rust client (non-wasm32 target)
+//! - [`NativeVaultClient`] — Native Rust client (`fhe-state` feature)
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -31,12 +36,22 @@ use serde::{Deserialize, Serialize};
 
 // ── Shared Types (all targets) ────────────────────────────────────────────────
 
-/// Serializable payload for vault contract submission.
+/// Serializable payload for the confidential-ledger state machine
+/// ([`crate::vault`]).
 ///
 /// Contains the context tag (τ), encrypted transfer amount, and encrypted
 /// target account identifier. Serialized with `bincode` for WASM transport.
+///
+/// # Renamed from `ContractPayload` (V-7)
+///
+/// This type was named `ContractPayload`, which implied an on-chain smart
+/// contract. It has never been that: this is a payload for the
+/// confidential *internal* ledger (see [`crate::vault`]'s "Two assets, not
+/// one" docs), which lives entirely in the agent's own storage and never
+/// touches a blockchain. `ContractPayload` remains available as a
+/// `#[deprecated]` type alias so existing code keeps compiling.
 #[derive(Serialize, Deserialize, Clone)]
-pub struct ContractPayload {
+pub struct LedgerPayload {
     /// 32-byte context tag τ (derived from block height or epoch).
     pub context_tag: [u8; 32],
     /// Bincode-serialized `FheUint64` ciphertext of the transfer amount.
@@ -44,6 +59,16 @@ pub struct ContractPayload {
     /// Bincode-serialized `FheUint64` ciphertext of the target account ID.
     pub encrypted_target: Vec<u8>,
 }
+
+/// Deprecated alias for [`LedgerPayload`] (V-7 soft rename). `ContractPayload`
+/// implied an on-chain smart contract; this payload is for the confidential
+/// *internal* ledger only and never touches a blockchain. Prefer
+/// `LedgerPayload` in new code.
+#[deprecated(
+    since = "0.2.0",
+    note = "renamed to `LedgerPayload` — this is the confidential internal ledger's payload, not an on-chain contract's (SAGP-PG-001 V-7)"
+)]
+pub type ContractPayload = LedgerPayload;
 
 // ── WASM feature: wasm-bindgen client ─────────────────────────────────────────
 //
@@ -114,7 +139,7 @@ impl AethelVaultClient {
         }
     }
 
-    /// Serialize a `ContractPayload` from pre-encrypted ciphertext bytes.
+    /// Serialize a `LedgerPayload` from pre-encrypted ciphertext bytes.
     ///
     /// On WASM, encryption is performed by the JS tfhe WASM API before calling
     /// this function. This function just packages the ciphertexts into a payload.
@@ -129,7 +154,7 @@ impl AethelVaultClient {
         }
         let mut tag_bytes = [0u8; 32];
         tag_bytes.copy_from_slice(context_tag);
-        let payload = ContractPayload {
+        let payload = LedgerPayload {
             context_tag: tag_bytes,
             encrypted_amount: encrypted_amount.to_vec(),
             encrypted_target: encrypted_target.to_vec(),
@@ -144,24 +169,19 @@ impl AethelVaultClient {
     }
 }
 
-// ── Native (non-wasm32) client API ────────────────────────────────────────────
+// ── Native `fhe-state` client API ─────────────────────────────────────────────
 //
-// Full TFHE client implementation for native builds.
+// Full TFHE client implementation for native builds. Requires the
+// `fhe-state` feature (SAGP-PG-001 V-3): this type directly links `tfhe`,
+// which a thin `signer`-mode consumer must never be forced to compile.
 
-#[cfg(not(target_arch = "wasm32"))]
-use tfhe::{
-    prelude::*,
-    ClientKey,
-    PublicKey,
-    FheUint64,
-    ConfigBuilder,
-    generate_keys,
-};
+#[cfg(all(not(target_arch = "wasm32"), feature = "fhe-state"))]
+use tfhe::{generate_keys, prelude::*, ClientKey, ConfigBuilder, FheUint64, PublicKey};
 
-/// Native client for TFHE operations (non-WASM builds).
+/// Native client for TFHE operations (non-WASM builds, `fhe-state` feature).
 ///
 /// Provides full TFHE key generation, encryption, and decryption.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "fhe-state"))]
 pub struct NativeVaultClient {
     /// TFHE client key for encryption and decryption.
     pub client_key: ClientKey,
@@ -171,7 +191,7 @@ pub struct NativeVaultClient {
     pub server_key: tfhe::ServerKey,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "fhe-state"))]
 impl NativeVaultClient {
     /// Generate a new TFHE key pair with default parameters.
     pub fn new() -> Self {
@@ -192,26 +212,38 @@ impl NativeVaultClient {
     }
 
     /// Decrypt a `FheUint64` ciphertext.
-    pub fn decrypt_u64_balance(&self, encrypted_bytes: &[u8]) -> Result<u64, Box<dyn std::error::Error>> {
+    pub fn decrypt_u64_balance(
+        &self,
+        encrypted_bytes: &[u8],
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         let ct: FheUint64 = bincode::deserialize(encrypted_bytes)?;
         Ok(ct.decrypt(&self.client_key))
     }
 
-    /// Serialize the server key for vault contract initialization.
+    /// Serialize the server key for the confidential ledger's `init_vault`.
+    ///
+    /// # This key never travels further than that one call (V-2)
+    ///
+    /// The bytes this returns are an authorization capability for the
+    /// confidential ledger, not a public evaluation key to publish. Load
+    /// them into *this process's* [`crate::vault::init_vault`] and nowhere
+    /// else — never transmit them to a remote host, and never include them
+    /// in anything destined for HelixDB or any other persistence tier. See
+    /// [`crate::vault`]'s "Custody rule" docs.
     pub fn export_server_key(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Ok(bincode::serialize(&self.server_key)?)
     }
 
-    /// Build a `ContractPayload`.
+    /// Build a `LedgerPayload`.
     pub fn build_payload(
         &self,
         context_tag: [u8; 32],
         amount: u64,
         target_account: u64,
-    ) -> Result<ContractPayload, Box<dyn std::error::Error>> {
+    ) -> Result<LedgerPayload, Box<dyn std::error::Error>> {
         let encrypted_amount = self.encrypt_u64_balance(amount)?;
         let encrypted_target = self.encrypt_u64_balance(target_account)?;
-        Ok(ContractPayload {
+        Ok(LedgerPayload {
             context_tag,
             encrypted_amount,
             encrypted_target,
@@ -219,7 +251,7 @@ impl NativeVaultClient {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "fhe-state"))]
 impl Default for NativeVaultClient {
     fn default() -> Self {
         Self::new()
