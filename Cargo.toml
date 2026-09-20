@@ -1,3 +1,21 @@
+# ── Workspace ─────────────────────────────────────────────────────────────────
+#
+# This repository is `aethel-runtime`, and it holds more than the wallet. The
+# two crates are the two halves of acting on someone's behalf: `aethel-vault`
+# (this package, at the repository root) holds the authority to *spend* and is
+# agent-held; `crates/aethel-auth` verifies the authority to *act* and is what
+# a relying party hosts.
+#
+# They are separate crates rather than modules because their deployment
+# postures are opposites: this crate makes `hosted` a hard compile error and
+# advertises that, while a verifier is hosted by definition. Merging them
+# would void the claim. See `crates/aethel-auth/README.md`.
+#
+# `aethel-vault` remains the root package, so the profiles at the bottom of
+# this file still apply and the published crate's layout is unchanged.
+[workspace]
+members = ["crates/aethel-auth"]
+
 [package]
 name = "aethel-vault"
 version = "0.3.1"

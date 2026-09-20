@@ -1,0 +1,44 @@
+[package]
+name = "aethel-auth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Delegated authority for post-quantum identities: login handshake, sessions, delegation, succession and revocation statements over aethel-core's ML-DSA-65 identities. Verifier-first: the default build is verification only and depends on aethel-core alone."
+authors = ["Ed Johnson"]
+license = "Apache-2.0"
+repository = "https://github.com/0x307/aethel-runtime"
+keywords = ["identity", "post-quantum", "authentication", "delegation", "session"]
+categories = ["cryptography", "authentication"]
+
+# Plain rlib, deliberately. A server-side verifier has no use for a cdylib,
+# and a cdylib is what stopped `erand-nats` publishing on Linux. The sibling
+# `aethel-vault` needs cdylib for its wasm target; this crate does not.
+[lib]
+crate-type = ["rlib"]
+
+# ── Features ──────────────────────────────────────────────────────────────────
+#
+# Verifier-first. The default build is what a relying party runs: it verifies
+# statements and holds no secret of any kind. Producing statements is the
+# holder's side of the protocol and is opt-in, because a server should never
+# link the machinery for it by accident.
+[features]
+default = ["std", "verify"]
+
+std = []
+
+# `verify` — check a login response, a session, a delegation, a succession or
+# a revocation statement. Public material only. This is the surface a service
+# hosts, and it must never grow a dependency that implies holding a secret.
+verify = []
+
+# `holder` — produce those statements. Pulls the SDK, which embeds wasmtime.
+# Not enabled by default: a verifier must not pay for a WASM runtime to check
+# a signature. Empty until the statement types exist.
+holder = []
+
+[dependencies]
+# The only default dependency, and it should stay that way. `default-features
+# = false` plus `std` keeps the component and enclave machinery out: this
+# crate needs the signing and verification surface, nothing else.
+aethel-core = { version = "0.7", default-features = false, features = ["std"] }
