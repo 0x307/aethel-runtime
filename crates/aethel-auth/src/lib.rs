@@ -69,6 +69,19 @@
 /// there, the way `aethel-vault`'s are.
 pub use aethel_core::signing::purpose;
 
+/// This crate's own entries in that registry, named locally so a caller does
+/// not have to know they live upstream.
+///
+/// Each statement type gets its own purpose and never borrows another's. That
+/// is what makes a signature for one statement structurally unusable as
+/// another, rather than a rule callers have to remember.
+pub mod purposes {
+    pub use aethel_core::signing::purpose::{
+        AUTH_DELEGATION_V1, AUTH_ENROL_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1,
+        AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
+    };
+}
+
 #[cfg(test)]
 mod tests {
     /// The default build is what a service hosts, so it must not acquire a
@@ -111,5 +124,67 @@ mod tests {
     #[test]
     fn purpose_registry_is_reachable() {
         assert!(!super::purpose::PLP_PRESENT_V1.is_empty());
+    }
+
+    /// The point of a purpose is not that the constant exists, it is that a
+    /// signature made under one is structurally unusable under another. Prove
+    /// that on this crate's own entries rather than trusting the registry.
+    ///
+    /// A login response replayed as a step-up is the concrete attack: both are
+    /// signed by the same key, over similar-looking bytes, moments apart.
+    #[test]
+    fn a_login_signature_is_not_a_step_up_signature() {
+        use aethel_core::signing::{verify_with_purpose, Identity};
+
+        let identity = Identity::generate(&[7u8; 32]).expect("32 bytes is enough entropy");
+        let public = identity.public_key();
+        let message = b"challenge-id|nonce|audience|expiry";
+
+        // Note the argument order: `purpose` comes before `message` in both
+        // calls. Both are `&[u8]`, so transposing them compiles and produces a
+        // signature over the wrong thing. Worth naming, since a caller who gets
+        // it backwards gets no help from the type system.
+        let signature = identity
+            .sign_with_purpose(super::purposes::AUTH_LOGIN_V1, message)
+            .expect("signing under a registered purpose");
+
+        assert!(
+            verify_with_purpose(&public, super::purposes::AUTH_LOGIN_V1, message, &signature)
+                .expect("well-formed inputs"),
+            "a login signature must verify under the login purpose"
+        );
+
+        assert!(
+            !verify_with_purpose(&public, super::purposes::AUTH_STEP_UP_V1, message, &signature)
+                .expect("well-formed inputs"),
+            "a login signature must NOT verify as a step-up: same key, same bytes, \
+             different purpose"
+        );
+    }
+
+    /// Every statement type this crate will produce needs its own purpose. A
+    /// collision would silently make two statement types interchangeable.
+    #[test]
+    fn this_crates_purposes_are_distinct_and_namespaced() {
+        use super::purposes::*;
+
+        let all = [
+            AUTH_LOGIN_V1,
+            AUTH_STEP_UP_V1,
+            AUTH_ENROL_V1,
+            AUTH_SUCCESSION_V1,
+            AUTH_REVOCATION_V1,
+            AUTH_DELEGATION_V1,
+        ];
+
+        for (i, a) in all.iter().enumerate() {
+            assert!(
+                a.starts_with(b"aethel-auth/"),
+                "purpose {i} is not namespaced to this crate"
+            );
+            for b in all.iter().skip(i + 1) {
+                assert_ne!(a, b, "two of this crate's purposes collide");
+            }
+        }
     }
 }
