@@ -28,6 +28,8 @@ name = "aethel-auth"
 version = "0.1.0"
 dependencies = [
  "aethel-core",
+ "sha3 0.10.9",
+ "subtle",
 ]
 
 [[package]]

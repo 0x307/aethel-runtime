@@ -38,7 +38,20 @@ verify = []
 holder = []
 
 [dependencies]
-# The only default dependency, and it should stay that way. `default-features
-# = false` plus `std` keeps the component and enclave machinery out: this
-# crate needs the signing and verification surface, nothing else.
+# `default-features = false` plus `std` keeps the component and enclave
+# machinery out: this crate needs the signing and verification surface,
+# nothing else.
 aethel-core = { version = "0.7", default-features = false, features = ["std"] }
+
+# SHAKE-256, for the session-secret commitment, the stored token hash, and the
+# session MAC. The same hash and the same version aethel-core itself uses, so
+# this adds no new algorithm to the trust surface. Keccak is not
+# length-extendable, so a keyed prefix `SHAKE256(secret || message)` is a sound
+# MAC and needs no HMAC construction wrapped around it.
+sha3 = { version = "0.10", default-features = false }
+
+# Constant-time equality for the MAC and the stored token hash. Comparing
+# either with `==` leaks how many leading bytes matched, and a hand-rolled
+# loop is liable to be optimised back into an early return. `subtle` exists
+# to stop exactly that and is the ecosystem's standard answer.
+subtle = { version = "2.6", default-features = false }

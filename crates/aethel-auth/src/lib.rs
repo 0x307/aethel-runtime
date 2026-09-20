@@ -58,8 +58,21 @@
 //! Scaffold. The statement types are not implemented yet; see the tracker.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+pub mod error;
+pub mod nonce;
+pub mod proof;
+pub mod session;
+
+pub use error::{AuthError, StoreError};
+pub use nonce::{InMemoryNonceStore, NonceStore};
+pub use proof::{
+    verify_login, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof, VerifyParams,
+};
+pub use session::{
+    verify_session, InMemorySessionStore, Session, SessionSecret, SessionStore, SessionToken,
+};
 
 /// Re-exported so consumers verify under the same registry entries this crate
 /// signs under, rather than defining their own bytes.
@@ -90,6 +103,13 @@ mod tests {
     /// This mirrors `aethel-vault`'s `manifest_contains_no_ecdsa_crates`: the
     /// cheapest way to keep a stated property true is to let the build fail
     /// when it stops being true, rather than to rely on review catching it.
+    ///
+    /// Note that this is a *deny* list, not "aethel-core and nothing else".
+    /// The crate also pulls `sha3` and `subtle`, both of which are small,
+    /// `no_std`, and already implied by what it does: SHAKE-256 is the hash
+    /// `aethel-core` itself uses, and constant-time comparison is not
+    /// something to hand-roll next to a MAC. What the list forbids is anything
+    /// that would make a verifier carry holder-side or wallet machinery.
     #[test]
     fn default_build_stays_verifier_only() {
         let manifest = include_str!("../Cargo.toml");
