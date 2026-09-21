@@ -29,6 +29,12 @@ pub enum AuthError {
     /// The nonce had already been claimed. A replay, or an honest client that
     /// reused a value it should not have.
     NonceAlreadyUsed,
+    /// A step-up was signed for a different action than the one being
+    /// attempted, or the action was swapped after the holder consented.
+    ActionMismatch,
+    /// A delegation did not authorise what the delegate attempted: wrong
+    /// action, over a bound, outside its window, or not for this audience.
+    NotDelegated,
     /// The supplied session secret does not match the commitment the login
     /// signature bound.
     CommitmentMismatch,
@@ -73,6 +79,8 @@ impl fmt::Display for AuthError {
             AuthError::Expired => write!(f, "proof has expired"),
             AuthError::BadSignature => write!(f, "signature did not verify under the expected purpose"),
             AuthError::NonceAlreadyUsed => write!(f, "nonce has already been claimed"),
+            AuthError::ActionMismatch => write!(f, "step-up was signed for a different action"),
+            AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
             AuthError::CommitmentMismatch => write!(f, "session secret does not match its commitment"),
             AuthError::NoSuchSession => write!(f, "session is unknown, expired or revoked"),
             AuthError::BadMac => write!(f, "request MAC did not verify"),
@@ -117,6 +125,8 @@ mod tests {
             AuthError::Expired,
             AuthError::BadSignature,
             AuthError::NonceAlreadyUsed,
+            AuthError::ActionMismatch,
+            AuthError::NotDelegated,
             AuthError::CommitmentMismatch,
             AuthError::NoSuchSession,
             AuthError::BadMac,

@@ -55,20 +55,27 @@
 //!
 //! # Status
 //!
-//! Scaffold. The statement types are not implemented yet; see the tracker.
+//! Built: the login proof, sessions, step-up and delegation. Not yet built:
+//! succession and revocation statements, and enrolment. See the tracker.
+//!
+//! The holder side is not built either. Everything here verifies; producing
+//! these statements is the `holder` feature's job and that feature is empty.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 
+pub mod delegation;
 pub mod error;
 pub mod nonce;
 pub mod proof;
 pub mod session;
 
+pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
 pub use error::{AuthError, StoreError};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
-    verify_login, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof, VerifyParams,
+    verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,
+    StepUpProof, VerifyParams,
 };
 pub use session::{
     verify_session, InMemorySessionStore, Session, SessionSecret, SessionStore, SessionToken,

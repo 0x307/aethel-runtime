@@ -30,7 +30,8 @@ use sha3::Shake256;
 
 use crate::error::AuthError;
 use crate::nonce::NonceStore;
-use crate::purposes::AUTH_LOGIN_V1;
+use crate::purposes::{AUTH_LOGIN_V1, AUTH_STEP_UP_V1};
+use subtle::ConstantTimeEq;
 
 /// How firmly an identity was established.
 ///
@@ -57,6 +58,8 @@ pub enum AuthMethod {
     LoginProof,
     /// A session token presented after such a proof.
     Session,
+    /// A step-up: control re-proven for one specific action.
+    StepUp,
 }
 
 /// The outcome of a successful verification.
@@ -110,7 +113,7 @@ pub struct LoginProof {
 /// delimiter instead would mean a field *containing* that delimiter could make
 /// two different proofs encode to identical bytes, so one signature would
 /// verify for both. With `audience` holding a URL, that is not hypothetical.
-fn push_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
+pub(crate) fn push_len_prefixed(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
     out.extend_from_slice(bytes);
 }
@@ -149,6 +152,41 @@ pub(crate) fn shake256_32(input: &[u8]) -> [u8; 32] {
     out
 }
 
+/// The checks every client-asserted proof shares: right audience, sane clock,
+/// not expired.
+///
+/// Shared between login and step-up so the two cannot drift. A step-up that
+/// enforced the window differently from a login would be a gap nobody meant to
+/// leave, and the only reliable way to avoid that is for there to be one
+/// implementation.
+fn check_envelope(
+    audience: &[u8],
+    issued_at: u64,
+    expires_at: u64,
+    params: &VerifyParams<'_>,
+) -> Result<(), AuthError> {
+    if audience.is_empty() {
+        return Err(AuthError::Malformed);
+    }
+    if audience != params.expected_audience {
+        return Err(AuthError::AudienceMismatch);
+    }
+
+    // Both directions. A proof from the future is as much a reason to refuse
+    // as a stale one, and treating only staleness as suspicious would let a
+    // fast-running clock buy unbounded validity.
+    if issued_at > params.now {
+        return Err(AuthError::StaleOrFutureProof);
+    }
+    if params.now.saturating_sub(issued_at) > params.max_age_secs {
+        return Err(AuthError::StaleOrFutureProof);
+    }
+    if expires_at <= params.now {
+        return Err(AuthError::Expired);
+    }
+    Ok(())
+}
+
 /// What the verifier brings to the check.
 pub struct VerifyParams<'a> {
     /// The relying party's own stable origin. Compared against the proof's.
@@ -182,26 +220,10 @@ pub async fn verify_login<N: NonceStore>(
     params: VerifyParams<'_>,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
-    if proof.audience.is_empty() || proof.public_key.is_empty() || proof.signature.is_empty() {
+    if proof.public_key.is_empty() || proof.signature.is_empty() {
         return Err(AuthError::Malformed);
     }
-
-    if proof.audience != params.expected_audience {
-        return Err(AuthError::AudienceMismatch);
-    }
-
-    // Both directions. A proof from the future is as much a reason to refuse
-    // as a stale one, and treating only staleness as suspicious would let a
-    // fast-running clock buy unbounded validity.
-    if proof.issued_at > params.now {
-        return Err(AuthError::StaleOrFutureProof);
-    }
-    if params.now.saturating_sub(proof.issued_at) > params.max_age_secs {
-        return Err(AuthError::StaleOrFutureProof);
-    }
-    if proof.expires_at <= params.now {
-        return Err(AuthError::Expired);
-    }
+    check_envelope(&proof.audience, proof.issued_at, proof.expires_at, &params)?;
 
     let verified = verify_with_purpose(
         &proof.public_key,
@@ -225,5 +247,117 @@ pub async fn verify_login<N: NonceStore>(
         strength: AuthStrength::Proven,
         method: AuthMethod::LoginProof,
         session_commitment: proof.session_commitment,
+    })
+}
+
+// ── Step-up ──────────────────────────────────────────────────────────────────
+
+/// A re-proof of control, bound to one specific action.
+///
+/// A session says "this is the same browser as before". A step-up says "the
+/// holder is present *right now*, and consents to *this*". They are different
+/// claims, and the cheap one must never be allowed to stand in for the other.
+///
+/// The shape is deliberately the same as [`LoginProof`] with one field added,
+/// so both go through the same envelope checks and cannot drift apart.
+///
+/// # Forward compatibility with predicates
+///
+/// When the predicate subsystem exists, the natural thing to want here is
+/// "prove you are under your cap" instead of disclosing the cap. That is
+/// additive: the encoding is length-prefixed, so a later `AUTH_STEP_UP_V2`
+/// can carry a predicate proof alongside `action_digest` without disturbing
+/// anything. Nothing is reserved for it now, because a field nobody fills is
+/// a field nobody maintains.
+///
+/// It is **not** buildable today for a reason worth recording: the range-proof
+/// spike commits the value slot itself, so `v_0` is whatever the prover put
+/// there. A predicate over a self-chosen bound proves that the holder chose a
+/// number, which is not a claim worth checking. Binding the value to an
+/// issuer-attested attribute is the prerequisite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepUpProof {
+    /// ML-DSA-65 public key. The same per-relying-party identity that logged in.
+    pub public_key: Vec<u8>,
+    /// The relying party this step-up is for.
+    pub audience: Vec<u8>,
+    /// 256 bits, fresh, never reused.
+    pub nonce: [u8; 32],
+    /// Unix seconds, per the holder's clock.
+    pub issued_at: u64,
+    /// Unix seconds, per the holder's clock.
+    pub expires_at: u64,
+    /// A digest of the action being consented to.
+    ///
+    /// The crate does not interpret this: only the relying party knows what
+    /// "transfer 500 to X" serialises to. What matters is that it is **bound
+    /// into the signature**, so a step-up granted for one action cannot be
+    /// presented for another.
+    pub action_digest: [u8; 32],
+    /// ML-DSA-65 signature over [`StepUpProof::signing_input`], under
+    /// `AUTH_STEP_UP_V1`.
+    pub signature: Vec<u8>,
+}
+
+impl StepUpProof {
+    /// The exact bytes the signature covers.
+    pub fn signing_input(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(128 + self.audience.len());
+        push_len_prefixed(&mut out, &self.audience);
+        out.extend_from_slice(&self.issued_at.to_be_bytes());
+        out.extend_from_slice(&self.expires_at.to_be_bytes());
+        push_len_prefixed(&mut out, &self.nonce);
+        push_len_prefixed(&mut out, &self.action_digest);
+        out
+    }
+}
+
+/// Verify a step-up against the action it claims to authorise.
+///
+/// `expected_action_digest` is what the *server* believes is about to happen,
+/// computed from its own view of the request. Comparing it against the signed
+/// one is the whole point: a holder who signed for a different action, or a
+/// caller who swapped the action after the signature, is refused.
+pub async fn verify_step_up<N: NonceStore>(
+    proof: &StepUpProof,
+    params: VerifyParams<'_>,
+    expected_action_digest: &[u8; 32],
+    nonces: &N,
+) -> Result<AuthenticatedIdentity, AuthError> {
+    if proof.public_key.is_empty() || proof.signature.is_empty() {
+        return Err(AuthError::Malformed);
+    }
+    check_envelope(&proof.audience, proof.issued_at, proof.expires_at, &params)?;
+
+    // Before spending CPU on a signature: is this even about the right action?
+    // Constant-time because the digest is not secret but the comparison sits
+    // on a path an attacker can drive, and there is no reason to leak a prefix
+    // match for free.
+    if !bool::from(proof.action_digest.ct_eq(expected_action_digest)) {
+        return Err(AuthError::ActionMismatch);
+    }
+
+    let verified = verify_with_purpose(
+        &proof.public_key,
+        AUTH_STEP_UP_V1,
+        &proof.signing_input(),
+        &proof.signature,
+    )
+    .map_err(|_| AuthError::Malformed)?;
+
+    if !verified {
+        return Err(AuthError::BadSignature);
+    }
+
+    if !nonces.claim(&proof.nonce, proof.expires_at).await? {
+        return Err(AuthError::NonceAlreadyUsed);
+    }
+
+    Ok(AuthenticatedIdentity {
+        public_key: proof.public_key.clone(),
+        audience: proof.audience.clone(),
+        strength: AuthStrength::Proven,
+        method: AuthMethod::StepUp,
+        session_commitment: None,
     })
 }
