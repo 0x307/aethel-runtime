@@ -14,7 +14,7 @@
 # `aethel-vault` remains the root package, so the profiles at the bottom of
 # this file still apply and the published crate's layout is unchanged.
 [workspace]
-members = ["crates/aethel-auth"]
+members = ["crates/aethel-auth", "crates/aethel-auth-cli"]
 
 [package]
 name = "aethel-vault"

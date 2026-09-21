@@ -149,6 +149,19 @@ impl SessionSecret {
         mac.finalize().into_bytes().into()
     }
 
+    /// The raw bytes, for the one moment they must cross a boundary.
+    ///
+    /// Named to be uncomfortable at the call site, because there is exactly
+    /// one legitimate use: the terminal that generated this secret handing it
+    /// to the browser that will hold it, once, at login.
+    ///
+    /// Not for logging, not for storing, and not for putting inside the login
+    /// proof — the signed bytes may be logged, which is why the proof carries
+    /// only [`SessionSecret::commitment`].
+    pub fn expose_for_transfer(&self) -> [u8; 32] {
+        self.0
+    }
+
     /// Constant-time MAC check.
     ///
     /// `==` on the digests would return as soon as two bytes differ, leaking

@@ -85,7 +85,7 @@ pub use error::{AuthError, StoreError};
 pub use holder::{revoke_as_authority, Holder};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
-    verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,
+    key_fingerprint, verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,
     StepUpProof, VerifyParams,
 };
 pub use statements::{

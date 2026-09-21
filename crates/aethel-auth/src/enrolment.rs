@@ -59,6 +59,7 @@ use crate::proof::{push_len_prefixed, AuthMethod, AuthStrength, VerifyParams};
 use crate::purposes::AUTH_ENROL_V1;
 
 /// A holder's proof that it controls the key it is registering.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrolmentProof {
     /// The ML-DSA-65 public key being registered.
@@ -108,6 +109,7 @@ impl EnrolmentProof {
 /// behind this key already has an account and has lost its key, the route back
 /// is a succession signed by the old key, or HTSS recovery of the old key
 /// itself. There is no third route, deliberately.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrolledIdentity {
     /// The key that proved possession.

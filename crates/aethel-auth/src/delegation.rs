@@ -53,6 +53,7 @@ use crate::purposes::AUTH_DELEGATION_V1;
 /// Every field is a *ceiling*. An empty or `None` field grants nothing rather
 /// than everything: a delegation that failed to say what it allowed should
 /// authorise nothing, not all of it.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bounds {
     /// Allow-list of action tags. Empty means no action is permitted.
@@ -75,6 +76,7 @@ pub struct Bounds {
 }
 
 /// A signed grant of bounded authority.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delegation {
     /// The granting identity's ML-DSA-65 public key, at this relying party.
@@ -147,6 +149,7 @@ impl Delegation {
 /// Returned rather than checked, because this crate holds no running totals
 /// and cannot ask a human. Returning it makes the remaining obligation
 /// explicit at the call site instead of leaving a cap silently unchecked.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemainingObligations {
     /// Keep a running total for this delegate and refuse once it would exceed

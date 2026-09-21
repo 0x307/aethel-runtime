@@ -43,6 +43,7 @@ use subtle::ConstantTimeEq;
 /// for this particular action" is a step-up question, tracked separately on
 /// the session, because collapsing the two would make them indistinguishable
 /// exactly where the difference matters.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthStrength {
     /// Cryptographically proven.
@@ -52,6 +53,7 @@ pub enum AuthStrength {
 }
 
 /// Which mechanism established the identity.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthMethod {
     /// An ML-DSA-65 login proof verified by this crate.
@@ -69,6 +71,7 @@ pub enum AuthMethod {
 /// Carries the public key rather than an account identifier: mapping a key to
 /// an account is the relying party's job and needs its own directory, which
 /// this crate deliberately does not own.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     /// The ML-DSA-65 public key that signed the proof.
@@ -85,6 +88,7 @@ pub struct AuthenticatedIdentity {
 }
 
 /// A client-asserted login proof.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginProof {
     /// ML-DSA-65 public key, 1,952 bytes.
@@ -189,6 +193,27 @@ pub(crate) fn check_envelope(
     Ok(())
 }
 
+/// A short, human-comparable name for a public key.
+///
+/// An ML-DSA-65 public key is 1,952 bytes, which is 3,904 hex characters. A
+/// person cannot read that off a screen, compare two of them, or dictate one
+/// over a phone, and a tool that prints it in full has told them nothing they
+/// can act on.
+///
+/// This is `SHAKE-256(key)` truncated to 8 bytes and grouped, so it fits on a
+/// line and a mismatch is visible at a glance. 64 bits is ample for comparing
+/// two values someone already holds; it is **not** an identifier to look a key
+/// up by, and a caller must never treat a matching fingerprint as proof that
+/// two keys are equal. Compare the keys for that.
+pub fn key_fingerprint(public_key: &[u8]) -> String {
+    let d = shake256_32(public_key);
+    d[..8]
+        .chunks(2)
+        .map(|c| format!("{:02x}{:02x}", c[0], c[1]))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// What the verifier brings to the check.
 ///
 /// `Copy`, because the first consumer to integrate hit this immediately: a
@@ -283,6 +308,7 @@ pub async fn verify_login<N: NonceStore>(
 /// there. A predicate over a self-chosen bound proves that the holder chose a
 /// number, which is not a claim worth checking. Binding the value to an
 /// issuer-attested attribute is the prerequisite.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepUpProof {
     /// ML-DSA-65 public key. The same per-relying-party identity that logged in.

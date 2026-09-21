@@ -59,6 +59,7 @@ use crate::purposes::{AUTH_REVOCATION_V1, AUTH_SUCCESSION_V1};
 /// This crate builds nothing that accumulates a history *about* a holder for
 /// an operator's benefit. A revocation is a statement its subject can read and
 /// verify, not an entry in someone's ledger.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevokedBy {
     /// The identity revoked itself. Signed by the key being revoked.
@@ -71,6 +72,7 @@ pub enum RevokedBy {
 }
 
 /// A signed statement that an identity's authority has ended.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Revocation {
     /// The key whose authority is ending.
@@ -112,6 +114,7 @@ impl Revocation {
 /// Only the **outgoing** key can sign one. That is the whole security
 /// property: it makes rotation something a holder does and an operator
 /// cannot.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Succession {
     /// The key standing down. Signs this statement.
