@@ -129,6 +129,19 @@ mod tests {
     /// cheapest way to keep a stated property true is to let the build fail
     /// when it stops being true, rather than to rely on review catching it.
     ///
+    /// # What this does not cover, which is most of it
+    ///
+    /// It reads **this crate's manifest text**. It would catch someone adding
+    /// `k256` here. It would not notice the same crate arriving through
+    /// `aethel-core` or `pqc-sig`, because a manifest is not a dependency
+    /// graph, and a test that searches one while claiming the other is worse
+    /// than no test.
+    ///
+    /// The real assertion is `aethel-ws/scripts/no-classical-crypto.sh`,
+    /// which walks the resolved graph for every crate in the family and runs
+    /// as part of the workspace gate. This one stays because it is free and
+    /// fails earlier, not because it is sufficient.
+    ///
     /// Note that this is a *deny* list, not "aethel-core and nothing else".
     /// The crate also pulls `sha3` and `subtle`, both of which are small,
     /// `no_std`, and already implied by what it does: SHAKE-256 is the hash
