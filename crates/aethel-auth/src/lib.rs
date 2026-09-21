@@ -55,8 +55,8 @@
 //!
 //! # Status
 //!
-//! Built: the login proof, sessions, step-up and delegation. Not yet built:
-//! succession and revocation statements, and enrolment. See the tracker.
+//! Built: the login proof, sessions, step-up, delegation, and succession and
+//! revocation statements. Not yet built: enrolment. See the tracker.
 //!
 //! The holder side is not built either. Everything here verifies; producing
 //! these statements is the `holder` feature's job and that feature is empty.
@@ -69,6 +69,7 @@ pub mod error;
 pub mod nonce;
 pub mod proof;
 pub mod session;
+pub mod statements;
 
 pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
 pub use error::{AuthError, StoreError};
@@ -76,6 +77,9 @@ pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
     verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,
     StepUpProof, VerifyParams,
+};
+pub use statements::{
+    verify_revocation, verify_succession, RevokedBy, Revocation, Succession,
 };
 pub use session::{
     verify_session, InMemorySessionStore, Session, SessionSecret, SessionStore, SessionToken,

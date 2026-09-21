@@ -35,6 +35,9 @@ pub enum AuthError {
     /// A delegation did not authorise what the delegate attempted: wrong
     /// action, over a bound, outside its window, or not for this audience.
     NotDelegated,
+    /// The signer was not entitled to make this statement: a holder revoking
+    /// a key that is not theirs, or an unrecognised authority.
+    NotAuthorised,
     /// The supplied session secret does not match the commitment the login
     /// signature bound.
     CommitmentMismatch,
@@ -81,6 +84,7 @@ impl fmt::Display for AuthError {
             AuthError::NonceAlreadyUsed => write!(f, "nonce has already been claimed"),
             AuthError::ActionMismatch => write!(f, "step-up was signed for a different action"),
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
+            AuthError::NotAuthorised => write!(f, "signer is not entitled to make this statement"),
             AuthError::CommitmentMismatch => write!(f, "session secret does not match its commitment"),
             AuthError::NoSuchSession => write!(f, "session is unknown, expired or revoked"),
             AuthError::BadMac => write!(f, "request MAC did not verify"),
@@ -127,6 +131,7 @@ mod tests {
             AuthError::NonceAlreadyUsed,
             AuthError::ActionMismatch,
             AuthError::NotDelegated,
+            AuthError::NotAuthorised,
             AuthError::CommitmentMismatch,
             AuthError::NoSuchSession,
             AuthError::BadMac,
