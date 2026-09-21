@@ -32,9 +32,12 @@ std = []
 # hosts, and it must never grow a dependency that implies holding a secret.
 verify = []
 
-# `holder` — produce those statements. Pulls the SDK, which embeds wasmtime.
-# Not enabled by default: a verifier must not pay for a WASM runtime to check
-# a signature. Empty until the statement types exist.
+# `holder` — produce those statements rather than check them.
+#
+# Adds no dependency: signing needs `aethel_core::signing::Identity`, which is
+# already here. The gate is not about cost, it is a guardrail — a server that
+# reaches for a builder is doing something it should not, and this makes that
+# a compile error rather than a code review.
 holder = []
 
 [dependencies]
@@ -55,3 +58,20 @@ sha3 = { version = "0.10", default-features = false }
 # loop is liable to be optimised back into an early return. `subtle` exists
 # to stop exactly that and is the ecosystem's standard answer.
 subtle = { version = "2.6", default-features = false }
+
+# HMAC-SHA-256 for the session MAC. Not SHAKE, despite SHAKE being this
+# family's house hash, and the reason is a hard platform constraint rather
+# than a preference: the browser holds the session key as a non-extractable
+# WebCrypto key, WebCrypto offers HMAC over SHA-2 only, and it has no SHA-3 or
+# SHAKE. Computing the MAC in JavaScript instead would mean JavaScript holding
+# the raw key, which is what the non-extractable key exists to prevent.
+#
+# Symmetric either way, so this stays all-PQC: Grover costs a square root and
+# leaves 128 bits on a 256-bit key.
+hmac = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
+[[test]]
+name = "holder_roundtrip"
+path = "tests/holder_roundtrip.rs"
+required-features = ["holder"]

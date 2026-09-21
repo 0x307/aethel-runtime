@@ -56,8 +56,8 @@
 //! # Status
 //!
 //! Built: the login proof, sessions, step-up, delegation, and succession and
-//! revocation statements, and enrolment. The verifier side of the authority
-//! layer is complete.
+//! revocation statements, and enrolment, with builders for all of them behind
+//! the `holder` feature. The authority layer is complete on both sides.
 //!
 //! The holder side is not built either. Everything here verifies; producing
 //! these statements is the `holder` feature's job and that feature is empty.
@@ -67,6 +67,9 @@
 
 pub mod delegation;
 pub mod enrolment;
+#[cfg(feature = "holder")]
+pub mod holder;
+
 pub mod error;
 pub mod nonce;
 pub mod proof;
@@ -78,6 +81,8 @@ pub use enrolment::{
     verify_enrolment, EnrolledIdentity, EnrolmentProof, InMemoryInviteStore, InviteStore,
 };
 pub use error::{AuthError, StoreError};
+#[cfg(feature = "holder")]
+pub use holder::{revoke_as_authority, Holder};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
     verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,

@@ -23,6 +23,25 @@
 //! today without a browser PQC signer, and a 256-bit key is post-quantum
 //! sound: Grover costs a square root, which leaves 128 bits of margin.
 //!
+//! # Why the verifier holding this key is not a backdoor
+//!
+//! It does hold one, and the distinction is worth stating rather than leaving
+//! to judgement. A session secret is **not a secret held about a holder**; it
+//! is a shared secret for a channel the verifier is one end of.
+//!
+//! Ask what an operator gains by having it. They can forge a MAC for a session
+//! they already host, and they are the party checking that MAC. They could
+//! equally decline to check it. A verifier can always let itself in, and that
+//! is not a backdoor because there is nothing to back into.
+//!
+//! Identity key material is what the no-secrets rule exists to protect: it
+//! would let an operator impersonate the holder **at other verifiers**, a
+//! capability reaching beyond the relationship. A session secret reaches
+//! nowhere — one session, one verifier, already the decision-maker.
+//!
+//! So this MAC protects a holder against a third party with a stolen cookie.
+//! It was never protecting them against the verifier, and structurally cannot.
+//!
 //! # What a stolen database yields
 //!
 //! Nothing usable on its own. The store holds `SHAKE-256(token)`, never the
@@ -93,8 +112,22 @@ impl SessionSecret {
 
     /// MAC over caller-supplied request bytes.
     ///
-    /// `SHAKE-256(secret || binding)`. Keccak is not length-extendable, so a
-    /// keyed prefix is a sound MAC and needs no HMAC construction around it.
+    /// **HMAC-SHA-256**, not SHAKE, despite SHAKE being this family's house
+    /// hash everywhere else. The reason is a hard platform constraint rather
+    /// than a preference.
+    ///
+    /// The browser holds this key as a **non-extractable** WebCrypto key, so
+    /// only algorithms WebCrypto implements are available, and WebCrypto
+    /// offers HMAC over SHA-2 with no SHA-3 or SHAKE. Computing a SHAKE MAC in
+    /// JavaScript instead would mean JavaScript holding the raw key, which is
+    /// precisely what a non-extractable key exists to prevent — and at that
+    /// point the MAC adds nothing over a bearer token, because any XSS takes
+    /// it.
+    ///
+    /// Still all-PQC: HMAC is symmetric, and Grover costs a square root, so a
+    /// 256-bit key retains 128 bits. The commitment and the stored token hash
+    /// remain SHAKE-256, since both run server-side where no such constraint
+    /// applies.
     ///
     /// # The binding is the caller's responsibility, and it matters
     ///
@@ -108,10 +141,12 @@ impl SessionSecret {
     /// `a_binding_without_a_varying_element_replays` in this module's tests,
     /// which demonstrates exactly that.
     pub fn mac(&self, binding: &[u8]) -> [u8; 32] {
-        let mut input = Vec::with_capacity(32 + binding.len());
-        input.extend_from_slice(&self.0);
-        input.extend_from_slice(binding);
-        shake256_32(&input)
+        use hmac::Mac;
+        // A 32-byte key is always a valid HMAC key length.
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&self.0)
+            .expect("HMAC accepts a key of any length");
+        mac.update(binding);
+        mac.finalize().into_bytes().into()
     }
 
     /// Constant-time MAC check.
