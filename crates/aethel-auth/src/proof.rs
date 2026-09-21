@@ -190,6 +190,12 @@ pub(crate) fn check_envelope(
 }
 
 /// What the verifier brings to the check.
+///
+/// `Copy`, because the first consumer to integrate hit this immediately: a
+/// caller that passes `params` to `verify_login` and then wants `params.now`
+/// for the session it opens had to clone or re-read it. Three small fields,
+/// nothing owned, so there is no reason to make that awkward.
+#[derive(Debug, Clone, Copy)]
 pub struct VerifyParams<'a> {
     /// The relying party's own stable origin. Compared against the proof's.
     pub expected_audience: &'a [u8],
