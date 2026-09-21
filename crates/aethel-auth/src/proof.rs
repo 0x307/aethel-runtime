@@ -60,6 +60,8 @@ pub enum AuthMethod {
     Session,
     /// A step-up: control re-proven for one specific action.
     StepUp,
+    /// An enrolment: first proof of possession against an invite.
+    Enrolment,
 }
 
 /// The outcome of a successful verification.
@@ -159,7 +161,7 @@ pub(crate) fn shake256_32(input: &[u8]) -> [u8; 32] {
 /// enforced the window differently from a login would be a gap nobody meant to
 /// leave, and the only reliable way to avoid that is for there to be one
 /// implementation.
-fn check_envelope(
+pub(crate) fn check_envelope(
     audience: &[u8],
     issued_at: u64,
     expires_at: u64,

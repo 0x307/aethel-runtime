@@ -56,7 +56,8 @@
 //! # Status
 //!
 //! Built: the login proof, sessions, step-up, delegation, and succession and
-//! revocation statements. Not yet built: enrolment. See the tracker.
+//! revocation statements, and enrolment. The verifier side of the authority
+//! layer is complete.
 //!
 //! The holder side is not built either. Everything here verifies; producing
 //! these statements is the `holder` feature's job and that feature is empty.
@@ -65,6 +66,7 @@
 #![warn(missing_docs)]
 
 pub mod delegation;
+pub mod enrolment;
 pub mod error;
 pub mod nonce;
 pub mod proof;
@@ -72,6 +74,9 @@ pub mod session;
 pub mod statements;
 
 pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
+pub use enrolment::{
+    verify_enrolment, EnrolledIdentity, EnrolmentProof, InMemoryInviteStore, InviteStore,
+};
 pub use error::{AuthError, StoreError};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{

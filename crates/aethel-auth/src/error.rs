@@ -38,6 +38,9 @@ pub enum AuthError {
     /// The signer was not entitled to make this statement: a holder revoking
     /// a key that is not theirs, or an unrecognised authority.
     NotAuthorised,
+    /// The invite was unknown, already spent, or lapsed. One variant for all
+    /// three, so nobody can probe which invitations exist.
+    InviteNotRedeemable,
     /// The supplied session secret does not match the commitment the login
     /// signature bound.
     CommitmentMismatch,
@@ -85,6 +88,7 @@ impl fmt::Display for AuthError {
             AuthError::ActionMismatch => write!(f, "step-up was signed for a different action"),
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
             AuthError::NotAuthorised => write!(f, "signer is not entitled to make this statement"),
+            AuthError::InviteNotRedeemable => write!(f, "invite is unknown, spent or lapsed"),
             AuthError::CommitmentMismatch => write!(f, "session secret does not match its commitment"),
             AuthError::NoSuchSession => write!(f, "session is unknown, expired or revoked"),
             AuthError::BadMac => write!(f, "request MAC did not verify"),
@@ -132,6 +136,7 @@ mod tests {
             AuthError::ActionMismatch,
             AuthError::NotDelegated,
             AuthError::NotAuthorised,
+            AuthError::InviteNotRedeemable,
             AuthError::CommitmentMismatch,
             AuthError::NoSuchSession,
             AuthError::BadMac,
