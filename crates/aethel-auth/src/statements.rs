@@ -43,11 +43,22 @@ use crate::purposes::{AUTH_REVOCATION_V1, AUTH_SUCCESSION_V1};
 
 /// Who ended an identity's authority.
 ///
-/// Kept distinct because they answer different questions after the fact. A
-/// holder revoking their own key is key hygiene; an authority revoking it is
-/// an administrative act with someone accountable for it. Collapsing them
-/// loses that, and an audit log that cannot tell them apart is not much of an
-/// audit log.
+/// Kept distinct for two reasons, neither of which is record-keeping for the
+/// relying party.
+///
+/// **The holder needs to know which happened.** "My access ended" and "someone
+/// else ended my access" are different facts, and the person they matter most
+/// to is the one whose key it was. A statement that cannot say which is
+/// withholding something from its subject.
+///
+/// **A statement that does not bind it is malleable.** If `by` sat outside the
+/// signature, whoever relayed a self-revocation could re-present it as an
+/// administrative act, or the reverse. That is a correctness property, not a
+/// reporting one.
+///
+/// This crate builds nothing that accumulates a history *about* a holder for
+/// an operator's benefit. A revocation is a statement its subject can read and
+/// verify, not an entry in someone's ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevokedBy {
     /// The identity revoked itself. Signed by the key being revoked.
@@ -82,7 +93,7 @@ impl Revocation {
     ///
     /// `by` is inside the signed input. Without it, a holder's
     /// self-revocation could be re-presented as an authority action, or the
-    /// reverse, and the audit trail would be forgeable by whoever relays it.
+    /// reverse, by whoever relays it.
     pub fn signing_input(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(128 + self.audience.len());
         push_len_prefixed(&mut out, &self.subject_key);
