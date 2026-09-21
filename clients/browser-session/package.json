@@ -1,0 +1,24 @@
+{
+  "name": "@aethel/browser-session",
+  "version": "0.1.0",
+  "description": "Browser half of an Aethel session: holds the session secret as a non-extractable WebCrypto key and MACs each request with it. Does not sign; signing lives in the terminal signer.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/session.ts",
+    "./binding": "./src/binding.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}

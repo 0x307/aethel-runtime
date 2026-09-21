@@ -1,1 +1,7 @@
 /target
+
+# The browser client type-checks with tsc, which is a developer
+# convenience. Nothing in the crate tests needs it: the cross-language
+# test runs the TypeScript through node directly, no install step.
+node_modules/
+package-lock.json
