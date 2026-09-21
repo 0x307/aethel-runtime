@@ -58,11 +58,14 @@ holder = []
 # nothing else.
 aethel-core = { version = "0.7", default-features = false, features = ["std"] }
 
-# SHAKE-256, for the session-secret commitment, the stored token hash, and the
-# session MAC. The same hash and the same version aethel-core itself uses, so
-# this adds no new algorithm to the trust surface. Keccak is not
-# length-extendable, so a keyed prefix `SHAKE256(secret || message)` is a sound
-# MAC and needs no HMAC construction wrapped around it.
+# SHAKE-256, for the session-secret commitment and the stored token hash. The
+# same hash and the same version aethel-core itself uses, so this adds no new
+# algorithm to the trust surface.
+#
+# The session MAC is deliberately *not* on this hash, and once was. It moved
+# to HMAC-SHA-256 under D8 because the browser computes it on WebCrypto, which
+# offers no SHA-3. These two stay on SHAKE because both are computed only
+# server-side, where that constraint does not reach.
 sha3 = { version = "0.10", default-features = false }
 
 # Constant-time equality for the MAC and the stored token hash. Comparing
@@ -80,10 +83,19 @@ subtle = { version = "2.6", default-features = false }
 #
 # Symmetric either way, so this stays all-PQC: Grover costs a square root and
 # leaves 128 bits on a 256-bit key.
-serde = { version = "1.0", features = ["derive"], optional = true }
-
+#
+# `sha2` additionally hashes the request body for the canonical binding, for
+# the same reason: the browser has to compute that hash too.
 hmac = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
+
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[dev-dependencies]
+# Only to read the browser client's output in the cross-language test. Not a
+# runtime dependency: the canonical encoding is length-prefixed bytes, and
+# nothing this crate verifies is JSON.
+serde_json = "1.0"
 
 [[test]]
 name = "holder_roundtrip"

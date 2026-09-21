@@ -59,12 +59,15 @@
 //! revocation statements, and enrolment, with builders for all of them behind
 //! the `holder` feature. The authority layer is complete on both sides.
 //!
-//! The holder side is not built either. Everything here verifies; producing
-//! these statements is the `holder` feature's job and that feature is empty.
+//! The browser half of the session flow is the TypeScript client in
+//! `clients/browser-session/`, which mirrors [`binding`] — the one format
+//! both ends must compute identically, and the only place in this protocol
+//! where two languages have to agree byte for byte.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 
+pub mod binding;
 pub mod delegation;
 pub mod enrolment;
 #[cfg(feature = "holder")]
@@ -76,6 +79,7 @@ pub mod proof;
 pub mod session;
 pub mod statements;
 
+pub use binding::{sha256_32, verify_request, RequestBinding, SESSION_BINDING_V1};
 pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
 pub use enrolment::{
     verify_enrolment, EnrolledIdentity, EnrolmentProof, InMemoryInviteStore, InviteStore,
