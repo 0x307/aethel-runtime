@@ -205,6 +205,29 @@ panic = "abort"          # Removes unwinding tables (saves ~150-300KB)
 strip = true             # Strips debug symbols and symbol tables
 overflow-checks = false  # Drops runtime integer overflow checks in release
 
+# ── Benchmark Profile ─────────────────────────────────────────────────────────
+#
+# `opt-level = 3` rather than release's `"z"`. A figure measured under `"z"`
+# describes a build nobody benchmarks for, and `pqc-sig` published exactly
+# that before its profile was split out.
+#
+# `overflow-checks = false` matches release deliberately, so the numbers
+# describe what ships. Worth recording that `aethel-core` makes the opposite
+# choice and keeps them on "for safety" — two crates in one family disagreeing
+# about whether release arithmetic is checked. That is a question for the
+# crates rather than for this profile, whose only job is to be honest about
+# which side it measured.
+#
+# `panic` is deliberately absent. Cargo ignores it for the bench profile and
+# says so — `warning: panic setting is ignored for bench profile` — so
+# benchmarks always build with unwinding whatever release does. Setting it
+# here would be a line that reads as a decision and is in fact a no-op.
+[profile.bench]
+opt-level       = 3
+lto             = true
+codegen-units   = 1
+overflow-checks = false
+
 # ── WASM-Specific Profile ─────────────────────────────────────────────────────
 
 [profile.wasm-release]
