@@ -73,13 +73,47 @@ function collect() {
         lo: j.median.confidence_interval.lower_bound,
         hi: j.median.confidence_interval.upper_bound,
         drift,
+        mtime: statSync(est).mtimeMs,
       });
     }
   }
   return out;
 }
 
-const rows = collect();
+// ── Only publish what this run measured ──────────────────────────────────────
+//
+// criterion never deletes results. A benchmark that is removed, renamed, or
+// put behind a feature leaves its last numbers in target/criterion forever,
+// and a naive reader of that directory publishes them as though they were
+// measured today.
+//
+// That is not hypothetical: gating the hybrid behind a feature (0X3-194) left
+// three stale entries that the first regenerated table published, dated the
+// previous afternoon, for a group the run had not executed.
+//
+// Benchmarks within one run finish seconds apart. Two hours is far wider than
+// any suite here takes and far narrower than the gap to a previous session.
+//
+// The limit of this heuristic, stated rather than discovered: two runs with
+// *different feature sets* minutes apart are not distinguishable by mtime, so
+// switching features and regenerating can still publish the earlier set.
+// Clear `target/criterion` when changing which benchmarks exist. Whatever is
+// excluded is printed to stderr, so the failure is at least visible.
+const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
+const all = collect();
+const newest = all.length ? Math.max(...all.map((r) => r.mtime)) : 0;
+const stale = all.filter((r) => newest - r.mtime > STALE_AFTER_MS);
+const rows = all.filter((r) => newest - r.mtime <= STALE_AFTER_MS);
+
+if (stale.length) {
+  // Loud, on stderr, because a silently dropped benchmark is the same class
+  // of problem as a silently published one.
+  console.error(
+    `note: ignoring ${stale.length} stale result(s) from an earlier run:\n` +
+      stale.map((r) => `  ${r.group}/${r.bench}`).join("\n")
+  );
+}
+
 if (rows.length === 0) {
   console.error(
     "No criterion results found under target/criterion.\n" +
