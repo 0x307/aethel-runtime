@@ -138,7 +138,17 @@ const version = (readFileSync(join(ROOT, "Cargo.toml"), "utf8").match(
 ) || [, "unknown"])[1];
 
 const commit = sh("git rev-parse --short HEAD");
-const dirty = sh("git status --porcelain") !== "" ? " (working tree dirty)" : "";
+// `:(exclude)BENCHMARKS.md` because of how this script is meant to be run:
+// `node scripts/bench-report.mjs > BENCHMARKS.md`. The shell truncates that
+// file before node starts, so without the exclusion the report sees its own
+// output as a modification and stamps itself "(working tree dirty)". Every
+// report carried that stamp until 2026-09-23, on trees that were otherwise
+// clean -- which tells a reader the numbers may not match the named commit
+// when they did.
+const dirty =
+  sh('git status --porcelain -- . ":(exclude)BENCHMARKS.md"') !== ""
+    ? " (working tree dirty)"
+    : "";
 const rustc = sh("rustc --version");
 const date = new Date().toISOString().slice(0, 10);
 
