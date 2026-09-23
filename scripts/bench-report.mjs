@@ -133,9 +133,18 @@ if (!rows.some((r) => r.group === "session")) {
   process.exit(1);
 }
 
-const version = (readFileSync(join(ROOT, "Cargo.toml"), "utf8").match(
-  /^version\s*=\s*"([^"]+)"/m
-) || [, "unknown"])[1];
+// The crate under benchmark is aethel-auth, which lives in crates/aethel-auth.
+// ROOT/Cargo.toml is the workspace root's package, aethel-vault, so reading it
+// stamped every report with aethel-vault's version (0.2.0) instead of
+// aethel-auth's (0.1.0). No fallback: a provenance table that cannot name the
+// version it measured should fail to generate rather than print a guess.
+const AUTH_MANIFEST = join(ROOT, "crates", "aethel-auth", "Cargo.toml");
+const versionMatch = readFileSync(AUTH_MANIFEST, "utf8").match(/^version\s*=\s*"([^"]+)"/m);
+if (!versionMatch) {
+  console.error(`No version line found in ${AUTH_MANIFEST}.`);
+  process.exit(1);
+}
+const version = versionMatch[1];
 
 const commit = sh("git rev-parse --short HEAD");
 // `:(exclude)BENCHMARKS.md` because of how this script is meant to be run:
