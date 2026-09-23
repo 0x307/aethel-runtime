@@ -175,7 +175,8 @@ const worst = withDrift.length
   ? withDrift.reduce((a, b) => (Math.abs(b.drift) > Math.abs(a.drift) ? b : a))
   : null;
 // A third of the suite moving is not a code change, it is the environment.
-const unstable = withDrift.length > 0 && drifted.length / withDrift.length > 0.33;
+const UNSTABLE_RATIO = 0.33;
+const unstable = withDrift.length > 0 && drifted.length / withDrift.length > UNSTABLE_RATIO;
 const pct = (d) => `${d >= 0 ? "+" : ""}${(d * 100).toFixed(1)}%`;
 
 let md = `# Benchmarks
@@ -329,7 +330,21 @@ afternoon rather than of the code.
 **For figures intended to be quoted**, regenerate on a machine with a stable
 clock: a desktop or server part with thermal headroom, idle, with frequency
 scaling pinned. The numbers will differ, and they will mean something.`
-      : `**Stable.** No benchmark moved more than ${(DRIFT_LIMIT * 100).toFixed(0)}% against the previous run${worst ? `; the largest shift was ${pct(worst.drift)} (\`${worst.group}/${worst.bench}\`)` : ""}.`
+      : drifted.length === 0
+        ? `**Stable.** No benchmark moved more than ${(DRIFT_LIMIT * 100).toFixed(0)}% against the previous run${worst ? `; the largest shift was ${pct(worst.drift)} (\`${worst.group}/${worst.bench}\`)` : ""}.`
+        : `**Mixed.** ${drifted.length} of ${withDrift.length} benchmarks moved more than ${(DRIFT_LIMIT * 100).toFixed(0)}% against the previous run, the worst by **${pct(worst.drift)}** (\`${worst.group}/${worst.bench}\`). That is below the ${(UNSTABLE_RATIO * 100).toFixed(0)}% of the suite it would take to call the whole run unstable, but it is not nothing.
+
+| Benchmark | Shift |
+|---|---:|
+${drifted
+  .sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift))
+  .slice(0, 12)
+  .map((r) => `| \`${r.group}/${r.bench}\` | ${pct(r.drift)} |`)
+  .join("\n")}
+
+With the code unchanged between runs, shifts of this size come from the
+machine or from the harness, not from the crate. Read these rows as this
+suite's resolution limit rather than as results.`
 }
 
 ## What is not measured
