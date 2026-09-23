@@ -3,6 +3,17 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — aethel-core 0.7
+
+Depends on aethel-core 0.7 (was 0.6). No other change.
+
+This is **breaking** in Cargo's sense, not in behaviour: `aethel_core::signing::Identity`
+appears in this crate's public API (`Receipt::sign`, `SettlementVault::new`), so an
+application that also depends on aethel-core directly must use the same minor version.
+With aethel-vault 0.2 and the latest aethel-core (0.7) in one project, cargo resolved two
+aethel-core versions and the build failed with "expected `Identity`, found `Identity`".
+Pair aethel-vault 0.3 with aethel-core 0.7.
+
 ## [0.2.0] — SAGP-PG-001 gap remediation (V-1 … V-7)
 
 This is a **breaking release**: the default feature set changed, the
