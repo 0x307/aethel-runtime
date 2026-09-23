@@ -1,6 +1,6 @@
 [package]
 name = "aethel-vault"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Post-quantum wallet vault for Rust and WASM. Thin `signer` mode (default) authorizes EIP-3009/x402 USDC transfers under a caller-supplied ECDSA-capable `SettlementSigner` and signs the intent with ML-DSA-65; confidential internal balances (`fhe-state` feature) are held and transferred as ciphertext the vault never decrypts. Vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
@@ -102,14 +102,16 @@ zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 #
 # 0.6 is the first release with the A-4 wire/verify_projection surface and
 # the `signing::purpose` registry this crate's `settlement`/`policy`/`receipt`
-# modules consume. Resolved from crates.io, so CI and a `cargo publish`
+# modules consume. 0.7 is the current release: `Identity` appears in this
+# crate's public API, so an application that also depends on aethel-core
+# directly must use the same minor version. Resolved from crates.io, so CI and a `cargo publish`
 # build against the same published artifact.
 #
 # default-features = false: don't pull in aethel-core's std feature; its
 # `plp`/`credential`/`signing`/`wire` modules are no_std + alloc, matching
 # this crate's own no_std-style module bodies.
 [dependencies.aethel-core]
-version = "0.6"
+version = "0.7"
 default-features = false
 optional = false
 
