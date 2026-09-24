@@ -15,6 +15,8 @@ Documentation and metadata only. No change to the API, the wire formats or behav
 - Adds `SECURITY.md` (how to report a vulnerability, what this crate does and does not protect)
   and `STABILITY.md` (the policy shared by every 0x307 crate), the only two the vault lacked.
 - Declares `rust-version = "1.85"`, the family MSRV, checked by building on Rust 1.85.0.
+- `Cargo.lock` moves from pqc-sig 0.4.0, now yanked, to 0.4.1. This lockfile only governs this
+  repository's own builds; a crate that depends on this one resolves pqc-sig itself.
 
 ## [0.3.0] — aethel-core 0.7
 

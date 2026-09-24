@@ -996,9 +996,9 @@ dependencies = [
 
 [[package]]
 name = "pqc-sig"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4478bb48ea85e73895b7ee5724120aaacc4dfe97e30a0a3982ab6252d35433f4"
+checksum = "f74e139d3dcaf68afe83a8718940b842dc04651beb378eb529932388f1736c57"
 dependencies = [
  "base64ct",
  "bs58",
