@@ -3,6 +3,21 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] - 2026-09-23
+
+Documentation and metadata only. No change to the API, the wire formats or behaviour.
+
+- The README opens with the crate's tier, MSRV, license and audit status, and ends with the
+  0x307 crate family: the six crates with their tiers, the runnable examples in
+  [0x307/examples](https://github.com/0x307/examples), and one audit statement shared by all
+  of them. The same section is in the crate docs, so it renders on docs.rs.
+- `Cargo.toml` sets `documentation` (docs.rs) and `homepage` (0x307.com/crates).
+- Adds `SECURITY.md` (how to report a vulnerability, what this crate does and does not protect)
+  and `STABILITY.md` (the policy shared by every 0x307 crate), the only two the vault lacked.
+- Declares `rust-version = "1.85"`, the family MSRV, checked by building on Rust 1.85.0.
+- `Cargo.lock` moves from pqc-sig 0.4.0, now yanked, to 0.4.1. This lockfile only governs this
+  repository's own builds; a crate that depends on this one resolves pqc-sig itself.
+
 ## [0.3.0] — aethel-core 0.7
 
 Depends on aethel-core 0.7 (was 0.6). No other change.
