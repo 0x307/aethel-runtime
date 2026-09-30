@@ -3,6 +3,16 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] - 2026-09-30
+
+Documentation only. No change to the API, the wire formats or behaviour.
+
+- The README no longer carries a generic "do not use in production" banner. The tier
+  (Preview) and the audit status are unchanged and still stated in the header and the
+  crate-family section: not independently audited, no CMVP validation.
+- `Cargo.lock` moves from pqc-sig 0.4.1, now yanked, to 0.4.2. This lockfile only governs this
+  repository's own builds.
+
 ## [0.3.1] - 2026-09-23
 
 Documentation and metadata only. No change to the API, the wire formats or behaviour.
