@@ -13,9 +13,6 @@
 > is a research component in a different crate. **This crate owns the word
 > "wallet."**
 
-> ⚠️ **Security Notice**: This is a pre-release implementation. Do not use
-> in production without a formal security audit.
-
 ## Two assets, not one
 
 This crate holds and moves two entirely separate things. There is **no

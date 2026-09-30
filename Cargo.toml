@@ -1,6 +1,6 @@
 [package]
 name = "aethel-vault"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Post-quantum wallet vault for Rust and WASM. Thin `signer` mode (default) authorizes EIP-3009/x402 USDC transfers under a caller-supplied ECDSA-capable `SettlementSigner` and signs the intent with ML-DSA-65; confidential internal balances (`fhe-state` feature) are held and transferred as ciphertext the vault never decrypts. Vault IDs derive from aethel-core anonymous identities."
