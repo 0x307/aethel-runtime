@@ -54,7 +54,7 @@
 use subtle::ConstantTimeEq;
 
 use crate::error::{AuthError, StoreError};
-use crate::proof::{shake256_32, AuthStrength};
+use crate::proof::{shake256_32, AuthStrength, AuthenticatedIdentity};
 
 /// An opaque session handle.
 ///
@@ -250,6 +250,45 @@ impl<A> Session<A> {
     /// Check a request's MAC against this session's secret.
     pub fn verify_mac(&self, binding: &[u8], presented: &[u8]) -> bool {
         self.secret.verify_mac(binding, presented)
+    }
+
+    /// Open the session a verified login asked for.
+    ///
+    /// The one way a relying party should turn [`crate::verify_login`]'s
+    /// result into a session. It checks the part every consumer would
+    /// otherwise have to remember: the secret the client handed over must be
+    /// the one the login signature committed to. Without that check, anyone
+    /// who intercepted a proof in flight could pair it with a secret of their
+    /// own and hold the session.
+    ///
+    /// Refuses a login that asked for no session (an agent re-proving per
+    /// request), since opening one anyway would hand it a bearer credential it
+    /// never asked for. Audience and strength come from the verified identity,
+    /// not the caller, so they cannot drift from what was proven.
+    #[allow(clippy::too_many_arguments)]
+    pub fn establish(
+        identity: &AuthenticatedIdentity,
+        secret: SessionSecret,
+        token: &SessionToken,
+        actor: A,
+        epoch: u64,
+        now: u64,
+        ttl_secs: u64,
+    ) -> Result<Self, AuthError> {
+        let committed = identity.session_commitment.ok_or(AuthError::CommitmentMismatch)?;
+        if !bool::from(committed.ct_eq(&secret.commitment())) {
+            return Err(AuthError::CommitmentMismatch);
+        }
+        Ok(Session::new(
+            token,
+            secret,
+            actor,
+            identity.audience.clone(),
+            identity.strength,
+            epoch,
+            now,
+            now.saturating_add(ttl_secs),
+        ))
     }
 
     /// Take the session apart for a persistent [`SessionStore`].
@@ -484,5 +523,47 @@ mod tests {
         let printed = format!("{:?}", session.into_stored());
         assert!(printed.contains("<redacted>"));
         assert!(!printed.contains(&format!("{:?}", [9u8; 32])), "{printed}");
+    }
+}
+
+#[cfg(test)]
+mod establish_tests {
+    use crate::proof::AuthMethod;
+    use super::*;
+
+    fn identity(commitment: Option<[u8; 32]>) -> AuthenticatedIdentity {
+        AuthenticatedIdentity {
+            public_key: vec![1; 8],
+            audience: b"https://rp.example/t/1".to_vec(),
+            strength: AuthStrength::Proven,
+            method: AuthMethod::LoginProof,
+            session_commitment: commitment,
+        }
+    }
+
+    #[test]
+    fn a_login_that_committed_to_this_secret_opens_a_session() {
+        let secret = SessionSecret::from_bytes([5; 32]);
+        let token = SessionToken::from_bytes([6; 32]);
+        let session = Session::establish(&identity(Some(secret.commitment())), secret, &token, "acct", 2, 100, 60).unwrap();
+        assert_eq!(session.audience, b"https://rp.example/t/1", "audience comes from what was proven");
+        assert_eq!((session.epoch, session.issued_at, session.expires_at), (2, 100, 160));
+        assert_eq!(session.strength, AuthStrength::Proven);
+    }
+
+    #[test]
+    fn a_secret_the_login_did_not_commit_to_is_refused() {
+        let committed = SessionSecret::from_bytes([5; 32]);
+        let substituted = SessionSecret::from_bytes([9; 32]);
+        let token = SessionToken::from_bytes([6; 32]);
+        let err = Session::establish(&identity(Some(committed.commitment())), substituted, &token, "acct", 0, 100, 60).unwrap_err();
+        assert_eq!(err, AuthError::CommitmentMismatch);
+    }
+
+    #[test]
+    fn a_login_that_asked_for_no_session_gets_none() {
+        let token = SessionToken::from_bytes([6; 32]);
+        let err = Session::establish(&identity(None), SessionSecret::from_bytes([5; 32]), &token, "acct", 0, 100, 60).unwrap_err();
+        assert_eq!(err, AuthError::CommitmentMismatch);
     }
 }
