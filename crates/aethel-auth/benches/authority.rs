@@ -305,7 +305,7 @@ fn statements(c: &mut Criterion) {
                 (invites, holder.enrol(invite, nonce, NOW, 300))
             },
             |(invites, proof)| {
-                block_on(verify_enrolment(&proof, params(), &invites)).expect("verify")
+                block_on(verify_enrolment(&proof, params(), &invites)).expect("verify").0
             },
             criterion::BatchSize::SmallInput,
         )

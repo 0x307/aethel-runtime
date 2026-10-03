@@ -41,6 +41,10 @@ pub enum AuthError {
     /// The invite was unknown, already spent, or lapsed. One variant for all
     /// three, so nobody can probe which invitations exist.
     InviteNotRedeemable,
+    /// The key enrolling is already bound to an account at this relying
+    /// party. Enrolment creates accounts and never adopts one, so a second
+    /// enrolment of one key is refused rather than merged.
+    KeyAlreadyEnrolled,
     /// The supplied session secret does not match the commitment the login
     /// signature bound.
     CommitmentMismatch,
@@ -89,6 +93,7 @@ impl fmt::Display for AuthError {
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
             AuthError::NotAuthorised => write!(f, "signer is not entitled to make this statement"),
             AuthError::InviteNotRedeemable => write!(f, "invite is unknown, spent or lapsed"),
+            AuthError::KeyAlreadyEnrolled => write!(f, "key is already enrolled"),
             AuthError::CommitmentMismatch => write!(f, "session secret does not match its commitment"),
             AuthError::NoSuchSession => write!(f, "session is unknown, expired or revoked"),
             AuthError::BadMac => write!(f, "request MAC did not verify"),
@@ -137,6 +142,7 @@ mod tests {
             AuthError::NotDelegated,
             AuthError::NotAuthorised,
             AuthError::InviteNotRedeemable,
+            AuthError::KeyAlreadyEnrolled,
             AuthError::CommitmentMismatch,
             AuthError::NoSuchSession,
             AuthError::BadMac,

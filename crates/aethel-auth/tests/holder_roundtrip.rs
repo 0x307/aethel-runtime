@@ -127,7 +127,7 @@ fn a_holder_enrols_against_an_invite() {
     invites.issue(b"invite-abc".to_vec(), NOW + 3600);
 
     let proof = holder.enrol(b"invite-abc".to_vec(), [5u8; 32], NOW, 60);
-    let enrolled = block_on(verify_enrolment(&proof, params(CONSOLE), &invites)).expect("enrol");
+    let (enrolled, ()) = block_on(verify_enrolment(&proof, params(CONSOLE), &invites)).expect("enrol");
 
     assert_eq!(enrolled.public_key, holder.public_key());
     assert!(invites.is_empty());

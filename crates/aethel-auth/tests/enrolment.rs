@@ -70,7 +70,7 @@ fn a_holder_enrols_by_proving_possession_against_an_invite() {
     let invites = store_with(b"invite-1");
     let proof = make_proof(&id, AUDIENCE, b"invite-1", [90u8; 32]);
 
-    let enrolled = block_on(verify_enrolment(&proof, params(), &invites)).expect("valid enrolment");
+    let (enrolled, ()) = block_on(verify_enrolment(&proof, params(), &invites)).expect("valid enrolment");
 
     assert_eq!(enrolled.public_key, id.public_key());
     assert_eq!(enrolled.invite_id, b"invite-1");
@@ -151,7 +151,7 @@ fn unknown_spent_and_lapsed_invites_are_indistinguishable() {
     let id = identity(96);
 
     // Unknown.
-    let empty = InMemoryInviteStore::new();
+    let empty: InMemoryInviteStore = InMemoryInviteStore::new();
     let unknown = block_on(verify_enrolment(
         &make_proof(&id, AUDIENCE, b"never-issued", [96u8; 32]),
         params(),
@@ -240,4 +240,80 @@ fn a_stale_enrolment_is_refused() {
         AuthError::StaleOrFutureProof,
         "enrolment shares the envelope checks with every other proof"
     );
+}
+
+// ── Grants and the directory ─────────────────────────────────────────────────
+
+use aethel_auth::{enrol, Directory, InMemoryDirectory};
+
+#[test]
+fn redeeming_an_invite_returns_what_it_grants() {
+    let id = identity(70);
+    let invites: InMemoryInviteStore<&'static str> = InMemoryInviteStore::new();
+    invites.issue_granting(b"invite-g".to_vec(), NOW + 3600, "tenant-7:admin");
+    let proof = make_proof(&id, AUDIENCE, b"invite-g", [70u8; 32]);
+
+    let (_, grant) = block_on(verify_enrolment(&proof, params(), &invites)).unwrap();
+    assert_eq!(grant, "tenant-7:admin");
+}
+
+fn directory() -> impl Directory<Account = String, Grant = &'static str> {
+    // Each enrolment mints a fresh account from the grant.
+    let counter = std::sync::atomic::AtomicU32::new(0);
+    InMemoryDirectory::new(move |_: &aethel_auth::EnrolledIdentity, grant: &'static str| {
+        let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("account-{n}@{grant}")
+    })
+}
+
+#[test]
+fn enrolling_creates_an_account_from_the_grant_and_the_key_then_resolves() {
+    let id = identity(71);
+    let invites: InMemoryInviteStore<&'static str> = InMemoryInviteStore::new();
+    invites.issue_granting(b"invite-1".to_vec(), NOW + 3600, "tenant-7");
+    let dir = directory();
+
+    let account = block_on(enrol(&make_proof(&id, AUDIENCE, b"invite-1", [71u8; 32]), params(), &invites, &dir)).unwrap();
+    assert_eq!(account, "account-0@tenant-7");
+    assert_eq!(block_on(dir.resolve(&id.public_key())).unwrap(), Some(account));
+    assert!(invites.is_empty());
+}
+
+#[test]
+fn a_key_already_enrolled_is_refused_without_spending_the_invite() {
+    let id = identity(72);
+    let invites: InMemoryInviteStore<&'static str> = InMemoryInviteStore::new();
+    invites.issue_granting(b"invite-1".to_vec(), NOW + 3600, "tenant-7");
+    invites.issue_granting(b"invite-2".to_vec(), NOW + 3600, "tenant-7");
+    let dir = directory();
+    block_on(enrol(&make_proof(&id, AUDIENCE, b"invite-1", [72u8; 32]), params(), &invites, &dir)).unwrap();
+
+    let again = block_on(enrol(&make_proof(&id, AUDIENCE, b"invite-2", [73u8; 32]), params(), &invites, &dir));
+    assert_eq!(again.unwrap_err(), AuthError::KeyAlreadyEnrolled);
+    assert_eq!(invites.len(), 1, "the second invite must survive a mistaken re-enrolment");
+}
+
+#[test]
+fn a_bad_signature_neither_spends_the_invite_nor_creates_an_account() {
+    let id = identity(74);
+    let invites: InMemoryInviteStore<&'static str> = InMemoryInviteStore::new();
+    invites.issue_granting(b"invite-1".to_vec(), NOW + 3600, "tenant-7");
+    let dir = directory();
+    let mut proof = make_proof(&id, AUDIENCE, b"invite-1", [74u8; 32]);
+    proof.signature[0] ^= 1;
+
+    assert!(block_on(enrol(&proof, params(), &invites, &dir)).is_err());
+    assert_eq!(invites.len(), 1);
+    assert_eq!(block_on(dir.resolve(&id.public_key())).unwrap(), None);
+}
+
+#[test]
+fn two_keys_on_two_invites_get_two_accounts() {
+    let invites: InMemoryInviteStore<&'static str> = InMemoryInviteStore::new();
+    invites.issue_granting(b"invite-1".to_vec(), NOW + 3600, "tenant-7");
+    invites.issue_granting(b"invite-2".to_vec(), NOW + 3600, "tenant-7");
+    let dir = directory();
+    let a = block_on(enrol(&make_proof(&identity(75), AUDIENCE, b"invite-1", [75u8; 32]), params(), &invites, &dir)).unwrap();
+    let b = block_on(enrol(&make_proof(&identity(76), AUDIENCE, b"invite-2", [76u8; 32]), params(), &invites, &dir)).unwrap();
+    assert_ne!(a, b, "an invite for the same tenant still mints a new account");
 }

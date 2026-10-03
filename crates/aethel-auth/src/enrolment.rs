@@ -132,29 +132,43 @@ pub struct EnrolledIdentity {
 /// Same contract as the nonce store, for the same reason: a read followed by a
 /// write lets two concurrent enrolments redeem one invite, which means two
 /// keys claiming one invitation.
+///
+/// # An invite carries its grant
+///
+/// An invitation is *to* something: a tenant, a set of capabilities, whatever
+/// the relying party means by it. [`InviteStore::Grant`] is that, in the
+/// relying party's own terms, and redeeming hands it back **in the same atomic
+/// step** that spends the invite. A store that only answered "spent or not"
+/// would leave the relying party to look the meaning up separately, which is a
+/// second read that can disagree with the first. `()` when invites carry
+/// nothing.
 pub trait InviteStore: Send + Sync {
-    /// Spend `invite_id` if it exists, is unspent, and has not lapsed.
+    /// What redeeming an invite entitles the new account to.
+    type Grant: Send;
+
+    /// Spend `invite_id` if it exists, is unspent, and has not lapsed, and
+    /// return what it grants.
     ///
-    /// Returns `Ok(true)` if this call spent it, `Ok(false)` if it was
+    /// Returns `Ok(Some(grant))` if this call spent it, `Ok(None)` if it was
     /// unknown, already spent, or expired. The three are deliberately one
     /// answer: distinguishing them would let someone probe which invitations
     /// exist.
     fn redeem(&self, invite_id: &[u8], now: u64)
-        -> impl Future<Output = Result<bool, StoreError>> + Send;
+        -> impl Future<Output = Result<Option<Self::Grant>, StoreError>> + Send;
 }
 
 /// In-process invite store. Reference implementation, not a deployment.
-pub struct InMemoryInviteStore {
-    invites: std::sync::Mutex<std::collections::HashMap<Vec<u8>, u64>>,
+pub struct InMemoryInviteStore<G = ()> {
+    invites: std::sync::Mutex<std::collections::HashMap<Vec<u8>, (u64, G)>>,
 }
 
-impl Default for InMemoryInviteStore {
+impl<G> Default for InMemoryInviteStore<G> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl InMemoryInviteStore {
+impl<G> InMemoryInviteStore<G> {
     /// An empty store.
     pub fn new() -> Self {
         Self {
@@ -162,12 +176,12 @@ impl InMemoryInviteStore {
         }
     }
 
-    /// Issue an invite valid until `expires_at`.
-    pub fn issue(&self, invite_id: Vec<u8>, expires_at: u64) {
+    /// Issue an invite valid until `expires_at` that grants `grant`.
+    pub fn issue_granting(&self, invite_id: Vec<u8>, expires_at: u64, grant: G) {
         self.invites
             .lock()
             .expect("invite store mutex poisoned")
-            .insert(invite_id, expires_at);
+            .insert(invite_id, (expires_at, grant));
     }
 
     /// How many invitations are outstanding. Tests only.
@@ -181,39 +195,34 @@ impl InMemoryInviteStore {
     }
 }
 
-impl InviteStore for InMemoryInviteStore {
-    async fn redeem(&self, invite_id: &[u8], now: u64) -> Result<bool, StoreError> {
+impl InMemoryInviteStore<()> {
+    /// Issue an invite that grants nothing beyond an account, valid until
+    /// `expires_at`.
+    pub fn issue(&self, invite_id: Vec<u8>, expires_at: u64) {
+        self.issue_granting(invite_id, expires_at, ());
+    }
+}
+
+impl<G: Send> InviteStore for InMemoryInviteStore<G> {
+    type Grant = G;
+
+    async fn redeem(&self, invite_id: &[u8], now: u64) -> Result<Option<G>, StoreError> {
         let mut invites = self.invites.lock().expect("invite store mutex poisoned");
         match invites.get(invite_id) {
-            Some(&expires_at) if expires_at > now => {
-                invites.remove(invite_id);
-                Ok(true)
-            }
+            Some((expires_at, _)) if *expires_at > now => Ok(invites.remove(invite_id).map(|(_, grant)| grant)),
             // Unknown, spent and lapsed are one answer on purpose.
-            _ => Ok(false),
+            _ => Ok(None),
         }
     }
 }
 
-/// Verify an enrolment and spend its invite.
-///
-/// # Order of checks
-///
-/// The signature is verified **before** the invite is redeemed, so a bad
-/// signature does not burn a holder's invitation. That matters more here than
-/// it does for a nonce: a nonce is the holder's own throwaway value, whereas
-/// an invite is a scarce thing someone had to issue, and burning it on a
-/// failed attempt would turn a garbled request into a support ticket.
-pub async fn verify_enrolment<I: InviteStore>(
-    proof: &EnrolmentProof,
-    params: VerifyParams<'_>,
-    invites: &I,
-) -> Result<EnrolledIdentity, AuthError> {
+/// The signature and envelope half of enrolment, with no store touched.
+fn verify_possession(proof: &EnrolmentProof, params: &VerifyParams<'_>) -> Result<(), AuthError> {
     if proof.public_key.is_empty() || proof.signature.is_empty() || proof.invite_id.is_empty() {
         return Err(AuthError::Malformed);
     }
 
-    crate::proof::check_envelope(&proof.audience, proof.issued_at, proof.expires_at, &params)?;
+    crate::proof::check_envelope(&proof.audience, proof.issued_at, proof.expires_at, params)?;
 
     let verified = verify_with_purpose(
         &proof.public_key,
@@ -226,16 +235,150 @@ pub async fn verify_enrolment<I: InviteStore>(
     if !verified {
         return Err(AuthError::BadSignature);
     }
+    Ok(())
+}
 
-    if !invites.redeem(&proof.invite_id, params.now).await? {
-        return Err(AuthError::InviteNotRedeemable);
-    }
-
-    Ok(EnrolledIdentity {
+fn enrolled(proof: &EnrolmentProof) -> EnrolledIdentity {
+    EnrolledIdentity {
         public_key: proof.public_key.clone(),
         audience: proof.audience.clone(),
         invite_id: proof.invite_id.clone(),
         strength: AuthStrength::Proven,
         method: AuthMethod::Enrolment,
-    })
+    }
+}
+
+/// Verify an enrolment, spend its invite, and return what the invite granted.
+///
+/// # Order of checks
+///
+/// The signature is verified **before** the invite is redeemed, so a bad
+/// signature does not burn a holder's invitation. That matters more here than
+/// it does for a nonce: a nonce is the holder's own throwaway value, whereas
+/// an invite is a scarce thing someone had to issue, and burning it on a
+/// failed attempt would turn a garbled request into a support ticket.
+///
+/// Prefer [`enrol`], which also creates the account through a [`Directory`].
+pub async fn verify_enrolment<I: InviteStore>(
+    proof: &EnrolmentProof,
+    params: VerifyParams<'_>,
+    invites: &I,
+) -> Result<(EnrolledIdentity, I::Grant), AuthError> {
+    verify_possession(proof, &params)?;
+    let grant = invites
+        .redeem(&proof.invite_id, params.now)
+        .await?
+        .ok_or(AuthError::InviteNotRedeemable)?;
+    Ok((enrolled(proof), grant))
+}
+
+// ── The directory ────────────────────────────────────────────────────────────
+
+/// Where a relying party records which key belongs to which account.
+///
+/// This crate defines what a directory must do and stores nothing itself; the
+/// relying party implements it over its own storage. It is a trait here, not
+/// left to each consumer, so that the one operation that creates an account is
+/// named for exactly that and the safe enrolment path is the convenient one.
+///
+/// # The rule an implementation must keep
+///
+/// [`Directory::create_account`] **creates**. It must mint a new account for
+/// the key and must never bind the key to an account that already exists,
+/// whatever the grant says. An implementation that looks up "the account this
+/// invite was for" and attaches the key to it is account takeover by invite:
+/// whoever issues invites could then take any account. See the module docs.
+pub trait Directory: Send + Sync {
+    /// The relying party's account type, as sessions carry it.
+    type Account: Send;
+    /// What an invite grants. Must match the [`InviteStore`] used with it.
+    type Grant: Send;
+
+    /// The account `public_key` is bound to, if any.
+    fn resolve(&self, public_key: &[u8])
+        -> impl Future<Output = Result<Option<Self::Account>, StoreError>> + Send;
+
+    /// Create a new account for a freshly enrolled key, shaped by `grant`.
+    ///
+    /// Must refuse with [`AuthError::KeyAlreadyEnrolled`] if the key is
+    /// already bound, atomically: two concurrent enrolments of one key must
+    /// not both succeed.
+    fn create_account(&self, enrolled: &EnrolledIdentity, grant: Self::Grant)
+        -> impl Future<Output = Result<Self::Account, AuthError>> + Send;
+}
+
+/// Enrol a key: verify possession, spend the invite, create the account.
+///
+/// The way a relying party should handle an enrolment. A key that is already
+/// enrolled is refused **before** the invite is spent, so a holder who enrols
+/// twice by mistake does not burn an invitation. (Two enrolments of one key
+/// racing each other can still spend one invite; the directory's atomic check
+/// then refuses the loser.)
+pub async fn enrol<I, D>(
+    proof: &EnrolmentProof,
+    params: VerifyParams<'_>,
+    invites: &I,
+    directory: &D,
+) -> Result<D::Account, AuthError>
+where
+    I: InviteStore,
+    D: Directory<Grant = I::Grant>,
+{
+    verify_possession(proof, &params)?;
+    if directory.resolve(&proof.public_key).await?.is_some() {
+        return Err(AuthError::KeyAlreadyEnrolled);
+    }
+    let grant = invites
+        .redeem(&proof.invite_id, params.now)
+        .await?
+        .ok_or(AuthError::InviteNotRedeemable)?;
+    directory.create_account(&enrolled(proof), grant).await
+}
+
+/// In-process directory. Reference implementation, not a deployment.
+///
+/// `mint` turns a grant into a **new** account; it is called once per
+/// successful enrolment and nowhere else.
+pub struct InMemoryDirectory<A, G, F> {
+    accounts: std::sync::Mutex<std::collections::HashMap<Vec<u8>, A>>,
+    mint: F,
+    _grant: core::marker::PhantomData<fn(G)>,
+}
+
+impl<A, G, F> InMemoryDirectory<A, G, F>
+where
+    F: Fn(&EnrolledIdentity, G) -> A,
+{
+    /// An empty directory that mints accounts with `mint`.
+    pub fn new(mint: F) -> Self {
+        Self {
+            accounts: std::sync::Mutex::new(std::collections::HashMap::new()),
+            mint,
+            _grant: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<A, G, F> Directory for InMemoryDirectory<A, G, F>
+where
+    A: Clone + Send,
+    G: Send,
+    F: Fn(&EnrolledIdentity, G) -> A + Send + Sync,
+{
+    type Account = A;
+    type Grant = G;
+
+    async fn resolve(&self, public_key: &[u8]) -> Result<Option<A>, StoreError> {
+        Ok(self.accounts.lock().expect("directory mutex poisoned").get(public_key).cloned())
+    }
+
+    async fn create_account(&self, enrolled: &EnrolledIdentity, grant: G) -> Result<A, AuthError> {
+        let mut accounts = self.accounts.lock().expect("directory mutex poisoned");
+        if accounts.contains_key(&enrolled.public_key) {
+            return Err(AuthError::KeyAlreadyEnrolled);
+        }
+        let account = (self.mint)(enrolled, grant);
+        accounts.insert(enrolled.public_key.clone(), account.clone());
+        Ok(account)
+    }
 }
