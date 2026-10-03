@@ -155,7 +155,8 @@ impl SessionSecret {
     /// one legitimate use: the terminal that generated this secret handing it
     /// to the browser that will hold it, once, at login.
     ///
-    /// Not for logging, not for storing, and not for putting inside the login
+    /// Not for logging, not for storing (a persistent store goes through
+    /// [`Session::into_stored`]), and not for putting inside the login
     /// proof — the signed bytes may be logged, which is why the proof carries
     /// only [`SessionSecret::commitment`].
     pub fn expose_for_transfer(&self) -> [u8; 32] {
@@ -185,6 +186,11 @@ impl core::fmt::Debug for SessionSecret {
 ///
 /// Generic over the relying party's actor type, so this crate carries none of
 /// a consumer's domain types.
+///
+/// `A` is whatever the relying party needs a session to name, **not just "the
+/// user"**. A service whose sessions belong to an account *and* a tenant
+/// passes a composite of the two as `A`; there is deliberately no second type
+/// parameter. The first consumer to integrate (Ledger) does exactly that.
 #[derive(Debug, Clone)]
 pub struct Session<A> {
     /// What the store keys on. The token itself is not here.
@@ -244,6 +250,95 @@ impl<A> Session<A> {
     /// Check a request's MAC against this session's secret.
     pub fn verify_mac(&self, binding: &[u8], presented: &[u8]) -> bool {
         self.secret.verify_mac(binding, presented)
+    }
+
+    /// Take the session apart for a persistent [`SessionStore`].
+    ///
+    /// A store that outlives one process has to write the session secret
+    /// down, because verifying a MAC needs the key. The module docs explain
+    /// why that is not a backdoor; this is the one path that does it, so a
+    /// store never has to reach into the struct, and nothing else has a
+    /// reason to call it.
+    pub fn into_stored(self) -> StoredSession<A> {
+        StoredSession {
+            token_hash: self.token_hash,
+            actor: self.actor,
+            audience: self.audience,
+            strength: self.strength,
+            epoch: self.epoch,
+            issued_at: self.issued_at,
+            expires_at: self.expires_at,
+            stepped_up_at: self.stepped_up_at,
+            secret: self.secret.0,
+        }
+    }
+
+    /// Rebuild a session a persistent store read back.
+    ///
+    /// The inverse of [`Session::into_stored`]. It trusts the store, as
+    /// [`SessionStore::get`] already does: whatever the store returns is the
+    /// session.
+    pub fn from_stored(stored: StoredSession<A>) -> Self {
+        Session {
+            token_hash: stored.token_hash,
+            actor: stored.actor,
+            audience: stored.audience,
+            strength: stored.strength,
+            epoch: stored.epoch,
+            issued_at: stored.issued_at,
+            expires_at: stored.expires_at,
+            stepped_up_at: stored.stepped_up_at,
+            secret: SessionSecret(stored.secret),
+        }
+    }
+}
+
+/// A session as a persistent store writes it: every field, including the
+/// secret, as plain values.
+///
+/// Exists because [`Session`] keeps its secret private, which is right for
+/// everything that handles a session except the store itself. Without this, a
+/// relying party could only ever use [`InMemorySessionStore`], which the docs
+/// call a test double. Get one from [`Session::into_stored`], turn it back
+/// with [`Session::from_stored`].
+///
+/// `Debug` redacts the secret, as [`SessionSecret`]'s does.
+#[derive(Clone)]
+pub struct StoredSession<A> {
+    /// `SHAKE-256` of the token. Never the token itself.
+    pub token_hash: [u8; 32],
+    /// The relying party's account type.
+    pub actor: A,
+    /// The relying party the session was opened for.
+    pub audience: Vec<u8>,
+    /// How the identity was established.
+    pub strength: AuthStrength,
+    /// The epoch the session was opened in.
+    pub epoch: u64,
+    /// Unix seconds the session was opened.
+    pub issued_at: u64,
+    /// Unix seconds the session stops being valid.
+    pub expires_at: u64,
+    /// When authority was last re-proven, if ever.
+    pub stepped_up_at: Option<u64>,
+    /// The session secret. The store needs it to check MACs; it must never be
+    /// logged or returned to a client.
+    pub secret: [u8; 32],
+}
+
+impl<A: core::fmt::Debug> core::fmt::Debug for StoredSession<A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StoredSession")
+            .field("token_hash", &self.token_hash)
+            .field("actor", &self.actor)
+            .field("audience", &self.audience)
+            .field("strength", &self.strength)
+            .field("epoch", &self.epoch)
+            .field("issued_at", &self.issued_at)
+            .field("expires_at", &self.expires_at)
+            .field("stepped_up_at", &self.stepped_up_at)
+            .field("secret", &"<redacted>")
+            .finish()
     }
 }
 
@@ -342,5 +437,52 @@ impl<A: Clone + Send + Sync> SessionStore<A> for InMemorySessionStore<A> {
             .expect("session store mutex poisoned")
             .remove(token_hash);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> (SessionToken, SessionSecret, Session<&'static str>) {
+        let token = SessionToken::from_bytes([7; 32]);
+        let secret = SessionSecret::from_bytes([9; 32]);
+        let mut session = Session::new(
+            &token,
+            secret.clone(),
+            "account-1",
+            b"https://rp.example".to_vec(),
+            AuthStrength::Proven,
+            3,
+            1_000,
+            2_000,
+        );
+        session.stepped_up_at = Some(1_500);
+        (token, secret, session)
+    }
+
+    #[test]
+    fn a_stored_session_comes_back_as_the_same_session() {
+        let (token, secret, session) = session();
+        let back = Session::from_stored(session.into_stored());
+
+        assert_eq!(back.token_hash, token.hash());
+        assert_eq!(back.actor, "account-1");
+        assert_eq!(back.audience, b"https://rp.example");
+        assert_eq!((back.epoch, back.issued_at, back.expires_at), (3, 1_000, 2_000));
+        assert_eq!(back.stepped_up_at, Some(1_500));
+        // The point of storing the secret: a MAC made by the holder still
+        // verifies against the restored session.
+        let mac = secret.mac(b"request");
+        assert!(back.verify_mac(b"request", &mac));
+        assert!(!back.verify_mac(b"other request", &mac));
+    }
+
+    #[test]
+    fn a_stored_session_never_prints_its_secret() {
+        let (_, _, session) = session();
+        let printed = format!("{:?}", session.into_stored());
+        assert!(printed.contains("<redacted>"));
+        assert!(!printed.contains(&format!("{:?}", [9u8; 32])), "{printed}");
     }
 }

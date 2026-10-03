@@ -4,7 +4,7 @@ Delegated authority for post-quantum identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: scaffold.** The statement types are not implemented yet.
+> **Status: built, unpublished.** Login proof, sessions (including persistence for a real store via `Session::into_stored`), step-up, delegation, succession and revocation, and enrolment, with builders behind `holder`. Not yet on crates.io.
 
 ## What a service hosts, and what an agent holds
 

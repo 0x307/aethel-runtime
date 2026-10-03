@@ -96,7 +96,7 @@ pub use statements::{
     verify_revocation, verify_succession, RevokedBy, Revocation, Succession,
 };
 pub use session::{
-    verify_session, InMemorySessionStore, Session, SessionSecret, SessionStore, SessionToken,
+    verify_session, InMemorySessionStore, Session, SessionSecret, SessionStore, SessionToken, StoredSession,
 };
 
 /// Re-exported so consumers verify under the same registry entries this crate
