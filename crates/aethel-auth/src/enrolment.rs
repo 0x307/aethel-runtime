@@ -217,7 +217,7 @@ impl<G: Send> InviteStore for InMemoryInviteStore<G> {
 }
 
 /// The signature and envelope half of enrolment, with no store touched.
-fn verify_possession(proof: &EnrolmentProof, params: &VerifyParams<'_>) -> Result<(), AuthError> {
+pub(crate) fn verify_possession(proof: &EnrolmentProof, params: &VerifyParams<'_>) -> Result<(), AuthError> {
     if proof.public_key.is_empty() || proof.signature.is_empty() || proof.invite_id.is_empty() {
         return Err(AuthError::Malformed);
     }
@@ -238,7 +238,7 @@ fn verify_possession(proof: &EnrolmentProof, params: &VerifyParams<'_>) -> Resul
     Ok(())
 }
 
-fn enrolled(proof: &EnrolmentProof) -> EnrolledIdentity {
+pub(crate) fn enrolled(proof: &EnrolmentProof) -> EnrolledIdentity {
     EnrolledIdentity {
         public_key: proof.public_key.clone(),
         audience: proof.audience.clone(),
@@ -258,7 +258,8 @@ fn enrolled(proof: &EnrolmentProof) -> EnrolledIdentity {
 /// an invite is a scarce thing someone had to issue, and burning it on a
 /// failed attempt would turn a garbled request into a support ticket.
 ///
-/// Prefer [`enrol`], which also creates the account through a [`Directory`].
+/// Prefer [`crate::enrol`], which also creates the account through a
+/// [`crate::Directory`].
 pub async fn verify_enrolment<I: InviteStore>(
     proof: &EnrolmentProof,
     params: VerifyParams<'_>,
@@ -270,115 +271,4 @@ pub async fn verify_enrolment<I: InviteStore>(
         .await?
         .ok_or(AuthError::InviteNotRedeemable)?;
     Ok((enrolled(proof), grant))
-}
-
-// ── The directory ────────────────────────────────────────────────────────────
-
-/// Where a relying party records which key belongs to which account.
-///
-/// This crate defines what a directory must do and stores nothing itself; the
-/// relying party implements it over its own storage. It is a trait here, not
-/// left to each consumer, so that the one operation that creates an account is
-/// named for exactly that and the safe enrolment path is the convenient one.
-///
-/// # The rule an implementation must keep
-///
-/// [`Directory::create_account`] **creates**. It must mint a new account for
-/// the key and must never bind the key to an account that already exists,
-/// whatever the grant says. An implementation that looks up "the account this
-/// invite was for" and attaches the key to it is account takeover by invite:
-/// whoever issues invites could then take any account. See the module docs.
-pub trait Directory: Send + Sync {
-    /// The relying party's account type, as sessions carry it.
-    type Account: Send;
-    /// What an invite grants. Must match the [`InviteStore`] used with it.
-    type Grant: Send;
-
-    /// The account `public_key` is bound to, if any.
-    fn resolve(&self, public_key: &[u8])
-        -> impl Future<Output = Result<Option<Self::Account>, StoreError>> + Send;
-
-    /// Create a new account for a freshly enrolled key, shaped by `grant`.
-    ///
-    /// Must refuse with [`AuthError::KeyAlreadyEnrolled`] if the key is
-    /// already bound, atomically: two concurrent enrolments of one key must
-    /// not both succeed.
-    fn create_account(&self, enrolled: &EnrolledIdentity, grant: Self::Grant)
-        -> impl Future<Output = Result<Self::Account, AuthError>> + Send;
-}
-
-/// Enrol a key: verify possession, spend the invite, create the account.
-///
-/// The way a relying party should handle an enrolment. A key that is already
-/// enrolled is refused **before** the invite is spent, so a holder who enrols
-/// twice by mistake does not burn an invitation. (Two enrolments of one key
-/// racing each other can still spend one invite; the directory's atomic check
-/// then refuses the loser.)
-pub async fn enrol<I, D>(
-    proof: &EnrolmentProof,
-    params: VerifyParams<'_>,
-    invites: &I,
-    directory: &D,
-) -> Result<D::Account, AuthError>
-where
-    I: InviteStore,
-    D: Directory<Grant = I::Grant>,
-{
-    verify_possession(proof, &params)?;
-    if directory.resolve(&proof.public_key).await?.is_some() {
-        return Err(AuthError::KeyAlreadyEnrolled);
-    }
-    let grant = invites
-        .redeem(&proof.invite_id, params.now)
-        .await?
-        .ok_or(AuthError::InviteNotRedeemable)?;
-    directory.create_account(&enrolled(proof), grant).await
-}
-
-/// In-process directory. Reference implementation, not a deployment.
-///
-/// `mint` turns a grant into a **new** account; it is called once per
-/// successful enrolment and nowhere else.
-pub struct InMemoryDirectory<A, G, F> {
-    accounts: std::sync::Mutex<std::collections::HashMap<Vec<u8>, A>>,
-    mint: F,
-    _grant: core::marker::PhantomData<fn(G)>,
-}
-
-impl<A, G, F> InMemoryDirectory<A, G, F>
-where
-    F: Fn(&EnrolledIdentity, G) -> A,
-{
-    /// An empty directory that mints accounts with `mint`.
-    pub fn new(mint: F) -> Self {
-        Self {
-            accounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-            mint,
-            _grant: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<A, G, F> Directory for InMemoryDirectory<A, G, F>
-where
-    A: Clone + Send,
-    G: Send,
-    F: Fn(&EnrolledIdentity, G) -> A + Send + Sync,
-{
-    type Account = A;
-    type Grant = G;
-
-    async fn resolve(&self, public_key: &[u8]) -> Result<Option<A>, StoreError> {
-        Ok(self.accounts.lock().expect("directory mutex poisoned").get(public_key).cloned())
-    }
-
-    async fn create_account(&self, enrolled: &EnrolledIdentity, grant: G) -> Result<A, AuthError> {
-        let mut accounts = self.accounts.lock().expect("directory mutex poisoned");
-        if accounts.contains_key(&enrolled.public_key) {
-            return Err(AuthError::KeyAlreadyEnrolled);
-        }
-        let account = (self.mint)(enrolled, grant);
-        accounts.insert(enrolled.public_key.clone(), account.clone());
-        Ok(account)
-    }
 }

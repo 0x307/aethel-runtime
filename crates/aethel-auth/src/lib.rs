@@ -69,6 +69,7 @@
 
 pub mod binding;
 pub mod delegation;
+pub mod directory;
 pub mod enrolment;
 #[cfg(feature = "holder")]
 pub mod holder;
@@ -81,9 +82,9 @@ pub mod statements;
 
 pub use binding::{sha256_32, verify_request, RequestBinding, SESSION_BINDING_V1};
 pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
+pub use directory::{enrol, revoke, succeed, Directory, InMemoryDirectory};
 pub use enrolment::{
-    enrol, verify_enrolment, Directory, EnrolledIdentity, EnrolmentProof, InMemoryDirectory,
-    InMemoryInviteStore, InviteStore,
+    verify_enrolment, EnrolledIdentity, EnrolmentProof, InMemoryInviteStore, InviteStore,
 };
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]

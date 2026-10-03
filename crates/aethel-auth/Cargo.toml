@@ -114,3 +114,8 @@ required-features = ["holder"]
 name = "holder_roundtrip"
 path = "tests/holder_roundtrip.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "directory"
+path = "tests/directory.rs"
+required-features = ["holder"]

@@ -17,7 +17,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use aethel_auth::{Bounds, Holder, SessionSecret};
+use aethel_auth::{revoke_as_authority, Bounds, Holder, SessionSecret};
 use clap::{Parser, Subcommand};
 use rand::RngCore;
 
@@ -147,12 +147,17 @@ enum Command {
         #[arg(long, default_value_t = 86_400)]
         valid_for: u64,
     },
-    /// End this identity's authority at its relying party.
+    /// End an identity's authority at its relying party: this one's own, or,
+    /// with --subject, another key's, signing as an authority the relying
+    /// party recognises. Only ever removes authority.
     Revoke {
         #[arg(long)]
         identity: PathBuf,
         #[arg(long)]
         passphrase_file: PathBuf,
+        /// The public key to revoke, hex. Omit to revoke this identity itself.
+        #[arg(long)]
+        subject: Option<String>,
     },
     /// Name the key that continues this identity's authority.
     Succeed {
@@ -411,10 +416,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Revoke {
             identity,
             passphrase_file,
+            subject,
         } => {
             let (file, id) = open_identity(&identity, &passphrase_file)?;
-            let holder = Holder::new(&id, file.audience_bytes());
-            emit(&holder.revoke_self(now()))
+            match subject {
+                None => emit(&Holder::new(&id, file.audience_bytes()).revoke_self(now())),
+                Some(hex_key) => {
+                    let subject = decode_key(&hex_key, "subject public key")?;
+                    emit(&revoke_as_authority(&id, subject, file.audience_bytes(), now()))
+                }
+            }
         }
 
         Command::Succeed {
