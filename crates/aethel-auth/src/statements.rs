@@ -76,17 +76,21 @@ pub enum RevokedBy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Revocation {
     /// The key whose authority is ending.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub subject_key: Vec<u8>,
     /// The key that signed this statement. Equal to `subject_key` for
     /// [`RevokedBy::Holder`], the authority's key otherwise.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signer_key: Vec<u8>,
     /// Who did it.
     pub by: RevokedBy,
     /// The relying party this applies at. A revocation is not a broadcast.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// Unix seconds the statement was made.
     pub issued_at: u64,
     /// ML-DSA-65 signature under `AUTH_REVOCATION_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 
@@ -118,14 +122,18 @@ impl Revocation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Succession {
     /// The key standing down. Signs this statement.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub from_key: Vec<u8>,
     /// The key taking over.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub to_key: Vec<u8>,
     /// The relying party this applies at, and only there.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// Unix seconds.
     pub issued_at: u64,
     /// ML-DSA-65 signature by `from_key`, under `AUTH_SUCCESSION_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 

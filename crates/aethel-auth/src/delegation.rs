@@ -60,6 +60,7 @@ pub struct Bounds {
     ///
     /// The crate does not interpret a tag; only the relying party knows what
     /// `b"transfer"` means. It only checks membership.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::vec_bytes"))]
     pub actions: Vec<Vec<u8>>,
     /// Ceiling on any single invocation. `None` means no single-invocation
     /// ceiling was set, which a caller passing an amount must treat as a
@@ -80,10 +81,13 @@ pub struct Bounds {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delegation {
     /// The granting identity's ML-DSA-65 public key, at this relying party.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub principal_key: Vec<u8>,
     /// The receiving identity's ML-DSA-65 public key, at this relying party.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub delegate_key: Vec<u8>,
     /// The relying party this delegation is valid at, and only there.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// What the delegate may do.
     pub bounds: Bounds,
@@ -92,6 +96,7 @@ pub struct Delegation {
     /// Unix seconds. Not valid at or after this.
     pub expires_at: u64,
     /// ML-DSA-65 signature by the **principal**, under `AUTH_DELEGATION_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 

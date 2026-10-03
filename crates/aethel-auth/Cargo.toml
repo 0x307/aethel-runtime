@@ -119,3 +119,8 @@ required-features = ["holder"]
 name = "directory"
 path = "tests/directory.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "wire_json"
+path = "tests/wire_json.rs"
+required-features = ["holder"]

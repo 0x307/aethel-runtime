@@ -63,14 +63,18 @@ use crate::purposes::AUTH_ENROL_V1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrolmentProof {
     /// The ML-DSA-65 public key being registered.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The relying party being registered with.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// The invite being redeemed. Opaque to this crate; the relying party
     /// issued it and knows what it means.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub invite_id: Vec<u8>,
     /// 256 bits, fresh. Makes each enrolment signature unique even for a
     /// holder re-enrolling at the same service after leaving.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::array32"))]
     pub nonce: [u8; 32],
     /// Unix seconds, per the holder's clock.
     pub issued_at: u64,
@@ -78,6 +82,7 @@ pub struct EnrolmentProof {
     pub expires_at: u64,
     /// ML-DSA-65 signature over [`EnrolmentProof::signing_input`], under
     /// `AUTH_ENROL_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 
@@ -113,10 +118,13 @@ impl EnrolmentProof {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrolledIdentity {
     /// The key that proved possession.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The relying party it enrolled at.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// The invite it redeemed, now spent.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub invite_id: Vec<u8>,
     /// Always [`AuthStrength::Proven`]: an enrolment that did not prove
     /// possession is not an enrolment.

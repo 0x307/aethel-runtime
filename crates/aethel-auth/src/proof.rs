@@ -75,8 +75,10 @@ pub enum AuthMethod {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     /// The ML-DSA-65 public key that signed the proof.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The audience the proof was made for, as verified.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// How firmly the identity was established.
     pub strength: AuthStrength,
@@ -84,6 +86,7 @@ pub struct AuthenticatedIdentity {
     pub method: AuthMethod,
     /// Present when the holder committed to a session secret, which is how
     /// the human flow asks for a session. Absent for an agent.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::opt_array32"))]
     pub session_commitment: Option<[u8; 32]>,
 }
 
@@ -92,11 +95,14 @@ pub struct AuthenticatedIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginProof {
     /// ML-DSA-65 public key, 1,952 bytes.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The relying party this proof is for. Its stable origin, and the thing
     /// that stops a proof made for one service authenticating at another.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// 256 bits, from the holder's own CSPRNG. Never reused.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::array32"))]
     pub nonce: [u8; 32],
     /// Unix seconds, per the holder's clock.
     pub issued_at: u64,
@@ -107,9 +113,11 @@ pub struct LoginProof {
     ///
     /// A commitment rather than the secret itself: the signed bytes may be
     /// logged, and the secret must not be recoverable from them.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::opt_array32"))]
     pub session_commitment: Option<[u8; 32]>,
     /// ML-DSA-65 signature over [`LoginProof::signing_input`], made under
     /// `AUTH_LOGIN_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 
@@ -312,10 +320,13 @@ pub async fn verify_login<N: NonceStore>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepUpProof {
     /// ML-DSA-65 public key. The same per-relying-party identity that logged in.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The relying party this step-up is for.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
     /// 256 bits, fresh, never reused.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::array32"))]
     pub nonce: [u8; 32],
     /// Unix seconds, per the holder's clock.
     pub issued_at: u64,
@@ -327,9 +338,11 @@ pub struct StepUpProof {
     /// "transfer 500 to X" serialises to. What matters is that it is **bound
     /// into the signature**, so a step-up granted for one action cannot be
     /// presented for another.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::array32"))]
     pub action_digest: [u8; 32],
     /// ML-DSA-65 signature over [`StepUpProof::signing_input`], under
     /// `AUTH_STEP_UP_V1`.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
 

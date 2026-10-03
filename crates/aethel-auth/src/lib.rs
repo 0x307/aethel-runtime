@@ -68,6 +68,8 @@
 #![warn(missing_docs)]
 
 pub mod binding;
+#[cfg(feature = "serde")]
+mod b64;
 pub mod delegation;
 pub mod directory;
 pub mod enrolment;
