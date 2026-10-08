@@ -1,3 +1,21 @@
+# ── Workspace ─────────────────────────────────────────────────────────────────
+#
+# This repository is `aethel-runtime`, and it holds more than the wallet. The
+# two crates are the two halves of acting on someone's behalf: `aethel-vault`
+# (this package, at the repository root) holds the authority to *spend* and is
+# agent-held; `crates/aethel-auth` verifies the authority to *act* and is what
+# a relying party hosts.
+#
+# They are separate crates rather than modules because their deployment
+# postures are opposites: this crate makes `hosted` a hard compile error and
+# advertises that, while a verifier is hosted by definition. Merging them
+# would void the claim. See `crates/aethel-auth/README.md`.
+#
+# `aethel-vault` remains the root package, so the profiles at the bottom of
+# this file still apply and the published crate's layout is unchanged.
+[workspace]
+members = ["crates/aethel-auth", "crates/aethel-auth-cli"]
+
 [package]
 name = "aethel-vault"
 version = "0.3.2"
@@ -186,6 +204,29 @@ codegen-units = 1        # Maximize LTO optimization scope
 panic = "abort"          # Removes unwinding tables (saves ~150-300KB)
 strip = true             # Strips debug symbols and symbol tables
 overflow-checks = false  # Drops runtime integer overflow checks in release
+
+# ── Benchmark Profile ─────────────────────────────────────────────────────────
+#
+# `opt-level = 3` rather than release's `"z"`. A figure measured under `"z"`
+# describes a build nobody benchmarks for, and `pqc-sig` published exactly
+# that before its profile was split out.
+#
+# `overflow-checks = false` matches release deliberately, so the numbers
+# describe what ships. Worth recording that `aethel-core` makes the opposite
+# choice and keeps them on "for safety" — two crates in one family disagreeing
+# about whether release arithmetic is checked. That is a question for the
+# crates rather than for this profile, whose only job is to be honest about
+# which side it measured.
+#
+# `panic` is deliberately absent. Cargo ignores it for the bench profile and
+# says so — `warning: panic setting is ignored for bench profile` — so
+# benchmarks always build with unwinding whatever release does. Setting it
+# here would be a line that reads as a decision and is in fact a no-op.
+[profile.bench]
+opt-level       = 3
+lto             = true
+codegen-units   = 1
+overflow-checks = false
 
 # ── WASM-Specific Profile ─────────────────────────────────────────────────────
 

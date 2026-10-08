@@ -1,0 +1,46 @@
+[package]
+name = "aethel-auth-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Terminal signer for aethel-auth. Holds an identity, produces login proofs, step-ups, delegations and revocation and succession statements, and arranges HTSS social recovery."
+authors = ["Ed Johnson"]
+license = "Apache-2.0"
+repository = "https://github.com/0x307/aethel-runtime"
+publish = false
+
+[dependencies]
+# The crate this drives, with the builders enabled.
+aethel-auth = { path = "../aethel-auth", features = ["holder", "serde"] }
+
+# Identity generation, sealing, and HTSS.
+aethel-core = { version = "0.7.2", default-features = false, features = ["std"] }
+
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+
+# The CSPRNG. aethel-auth deliberately has none: its builders take the nonce
+# as an argument, because a library that silently
+# supplies randomness becomes the weakest link in somebody else's entropy.
+# This is where real randomness enters, so it has to be real: `OsRng`, never a
+# seeded or reproducible source.
+rand = "0.8"
+
+# Passphrase-to-key derivation for the sealed identity file.
+#
+# `Identity::export_sealed` takes key material and derives its own sealing key
+# with SHAKE-256 — one pass, no salt, no cost parameter. That is correct for
+# what it is (a KDF over key material) and wrong to feed a passphrase to
+# directly: a passphrase has far less entropy than a key, and a single hash
+# invites offline guessing at the speed of SHAKE.
+#
+# So argon2id sits in front: memory-hard, salted, tuned. What reaches
+# `export_sealed` is a 32-byte key, which is what it expects.
+argon2 = "0.5"
+
+[dev-dependencies]
+# The tests verify the CLI's output with the real verifier, so they need the
+# checking half of the crate the CLI drives.
+aethel-auth = { path = "../aethel-auth", features = ["holder", "serde"] }
