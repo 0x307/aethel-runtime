@@ -78,7 +78,9 @@ impl fmt::Display for AuthError {
             AuthError::AudienceMismatch => write!(f, "proof is for a different audience"),
             AuthError::StaleOrFutureProof => write!(f, "proof issued outside the accepted window"),
             AuthError::Expired => write!(f, "proof has expired"),
-            AuthError::BadSignature => write!(f, "signature did not verify under the expected purpose"),
+            AuthError::BadSignature => {
+                write!(f, "signature did not verify under the expected purpose")
+            }
             AuthError::NonceAlreadyUsed => write!(f, "nonce has already been claimed"),
             AuthError::ActionMismatch => write!(f, "step-up was signed for a different action"),
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
@@ -131,7 +133,10 @@ mod tests {
         ];
 
         for e in &rejections {
-            assert!(e.is_rejection(), "{e:?} should be a verdict about the request");
+            assert!(
+                e.is_rejection(),
+                "{e:?} should be a verdict about the request"
+            );
             assert_eq!(
                 e.public_message(),
                 "authentication failed",

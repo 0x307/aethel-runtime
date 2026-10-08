@@ -19,7 +19,11 @@ fn proof() -> LoginProof {
 fn a_login_proof_is_compact_text_and_round_trips() {
     let proof = proof();
     let json = serde_json::to_string(&proof).unwrap();
-    assert!(json.len() < 8_000, "{} bytes; number arrays made this ~19 KB", json.len());
+    assert!(
+        json.len() < 8_000,
+        "{} bytes; number arrays made this ~19 KB",
+        json.len()
+    );
     assert!(!json.contains("[33,"), "no byte arrays in the output");
     assert_eq!(serde_json::from_str::<LoginProof>(&json).unwrap(), proof);
 }
@@ -36,7 +40,10 @@ fn a_proof_in_the_old_number_array_shape_still_reads() {
         "session_commitment": proof.session_commitment,
         "signature": proof.signature,
     });
-    assert!(old.to_string().contains("\"nonce\":[4,4,"), "really the old shape");
+    assert!(
+        old.to_string().contains("\"nonce\":[4,4,"),
+        "really the old shape"
+    );
     assert_eq!(serde_json::from_value::<LoginProof>(old).unwrap(), proof);
 }
 
@@ -48,10 +55,20 @@ fn absent_options_and_wrong_lengths_behave() {
     assert!(json.contains("\"session_commitment\":null"));
     assert_eq!(serde_json::from_str::<LoginProof>(&json).unwrap(), agent);
 
-    let short_nonce = json.replace(&format!("\"nonce\":{}", serde_json::to_string(&serde_json::to_value(&agent).unwrap()["nonce"]).unwrap()), "\"nonce\":\"AAAA\"");
-    assert!(serde_json::from_str::<LoginProof>(&short_nonce).is_err(), "a nonce must be 32 bytes");
+    let short_nonce = json.replace(
+        &format!(
+            "\"nonce\":{}",
+            serde_json::to_string(&serde_json::to_value(&agent).unwrap()["nonce"]).unwrap()
+        ),
+        "\"nonce\":\"AAAA\"",
+    );
+    assert!(
+        serde_json::from_str::<LoginProof>(&short_nonce).is_err(),
+        "a nonce must be 32 bytes"
+    );
 
     let revocation = Holder::new(&id, AUDIENCE).revoke_self(1_700_000_000);
-    let back: Revocation = serde_json::from_str(&serde_json::to_string(&revocation).unwrap()).unwrap();
+    let back: Revocation =
+        serde_json::from_str(&serde_json::to_string(&revocation).unwrap()).unwrap();
     assert_eq!(back, revocation);
 }

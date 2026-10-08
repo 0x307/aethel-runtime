@@ -32,8 +32,8 @@
 //! the old one is known. That is why `identity new` arranges recovery by
 //! default and opting out takes a flag.
 
-use zeroize::Zeroizing;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 use aethel_core::htss::{HtssShare, SecretSharer};
 use serde::{Deserialize, Serialize};

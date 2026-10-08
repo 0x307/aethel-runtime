@@ -40,8 +40,7 @@ use aethel_core::signing::Identity;
 use crate::delegation::{Bounds, Delegation};
 use crate::proof::{LoginProof, StepUpProof};
 use crate::purposes::{
-    AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1,
-    AUTH_SUCCESSION_V1,
+    AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
 };
 use crate::statements::{Revocation, RevokedBy, Succession};
 

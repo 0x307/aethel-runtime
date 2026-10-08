@@ -297,7 +297,10 @@ pub async fn verify_login<N: NonceStore>(
     }
 
     if !nonces
-        .claim(&proof.nonce, nonce_retention(proof.issued_at, proof.expires_at, &params))
+        .claim(
+            &proof.nonce,
+            nonce_retention(proof.issued_at, proof.expires_at, &params),
+        )
         .await?
     {
         return Err(AuthError::NonceAlreadyUsed);
@@ -421,7 +424,10 @@ pub async fn verify_step_up<N: NonceStore>(
     }
 
     if !nonces
-        .claim(&proof.nonce, nonce_retention(proof.issued_at, proof.expires_at, &params))
+        .claim(
+            &proof.nonce,
+            nonce_retention(proof.issued_at, proof.expires_at, &params),
+        )
         .await?
     {
         return Err(AuthError::NonceAlreadyUsed);

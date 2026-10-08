@@ -25,9 +25,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use aethel_auth::{
-    authorise, key_fingerprint, verify_delegation, verify_login, verify_revocation,
-    verify_step_up, verify_succession, Bounds, Holder, InMemoryNonceStore,
-    VerifyParams,
+    authorise, key_fingerprint, verify_delegation, verify_login, verify_revocation, verify_step_up,
+    verify_succession, Bounds, Holder, InMemoryNonceStore, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -95,14 +94,9 @@ fn login(c: &mut Criterion) {
                 n += 1;
                 let mut nonce = [0u8; 32];
                 nonce[..4].copy_from_slice(&n.to_le_bytes());
-                (
-                    InMemoryNonceStore::new(),
-                    holder.login(nonce, NOW, 300),
-                )
+                (InMemoryNonceStore::new(), holder.login(nonce, NOW, 300))
             },
-            |(nonces, proof)| {
-                block_on(verify_login(&proof, params(), &nonces)).expect("verify")
-            },
+            |(nonces, proof)| block_on(verify_login(&proof, params(), &nonces)).expect("verify"),
             criterion::BatchSize::SmallInput,
         )
     });

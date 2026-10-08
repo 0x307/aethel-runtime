@@ -101,7 +101,14 @@ fn a_replayed_proof_is_refused() {
 fn a_proof_for_another_audience_is_refused() {
     let id = identity(3);
     let nonces = InMemoryNonceStore::new();
-    let proof = make_proof(&id, b"https://evil.example", [3u8; 32], NOW - 5, NOW + 60, None);
+    let proof = make_proof(
+        &id,
+        b"https://evil.example",
+        [3u8; 32],
+        NOW - 5,
+        NOW + 60,
+        None,
+    );
 
     assert_eq!(
         block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
@@ -129,7 +136,14 @@ fn a_proof_older_than_the_verifiers_max_age_is_refused() {
     let nonces = InMemoryNonceStore::new();
     // The client claims a year of validity. The verifier's own clamp is what
     // decides, not the client's optimism.
-    let proof = make_proof(&id, AUDIENCE, [5u8; 32], NOW - 10_000, NOW + 31_536_000, None);
+    let proof = make_proof(
+        &id,
+        AUDIENCE,
+        [5u8; 32],
+        NOW - 10_000,
+        NOW + 31_536_000,
+        None,
+    );
 
     assert_eq!(
         block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
@@ -173,7 +187,10 @@ fn tampering_with_any_signed_field_is_refused() {
     let id = identity(8);
 
     for (label, mutate) in [
-        ("expiry", (|p: &mut LoginProof| p.expires_at += 1) as fn(&mut LoginProof)),
+        (
+            "expiry",
+            (|p: &mut LoginProof| p.expires_at += 1) as fn(&mut LoginProof),
+        ),
         ("issued_at", |p: &mut LoginProof| p.issued_at -= 1),
         ("nonce", |p: &mut LoginProof| p.nonce[0] ^= 1),
     ] {

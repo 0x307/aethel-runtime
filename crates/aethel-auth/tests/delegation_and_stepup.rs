@@ -4,9 +4,9 @@
 //! defaulted. Every case where a field was left unset asserts a refusal.
 
 use aethel_auth::{
-    authorise, check_approval, purposes, verify_delegation, verify_step_up, AuthError,
-    AuthMethod, AuthStrength, AuthenticatedIdentity, Bounds, Delegation, InMemoryNonceStore,
-    StepUpProof, VerifyParams,
+    authorise, check_approval, purposes, verify_delegation, verify_step_up, AuthError, AuthMethod,
+    AuthStrength, AuthenticatedIdentity, Bounds, Delegation, InMemoryNonceStore, StepUpProof,
+    VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -83,7 +83,13 @@ fn a_step_up_for_one_action_does_not_authorise_another() {
     let proof = make_step_up(&id, AUDIENCE, [21u8; 32], consented_to);
 
     assert_eq!(
-        block_on(verify_step_up(&proof, params(), &actually_attempted, &nonces)).unwrap_err(),
+        block_on(verify_step_up(
+            &proof,
+            params(),
+            &actually_attempted,
+            &nonces
+        ))
+        .unwrap_err(),
         AuthError::ActionMismatch,
         "consent to transfer 5 must not authorise transferring 5000"
     );
@@ -194,7 +200,10 @@ fn a_delegate_may_act_within_the_bounds_the_principal_signed() {
         !obligations.human_approval_required,
         "100 is under the 250 approval threshold"
     );
-    assert!(!obligations.is_clear(), "a cumulative cap is still the caller's to enforce");
+    assert!(
+        !obligations.is_clear(),
+        "a cumulative cap is still the caller's to enforce"
+    );
 }
 
 #[test]
@@ -218,7 +227,15 @@ fn a_valid_delegation_does_not_authorise_a_different_delegate() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(&d, AUDIENCE, &impostor.public_key(), b"transfer", Some(10), NOW).unwrap_err(),
+        authorise(
+            &d,
+            AUDIENCE,
+            &impostor.public_key(),
+            b"transfer",
+            Some(10),
+            NOW
+        )
+        .unwrap_err(),
         AuthError::NotDelegated,
         "the delegate key is bound by the principal's signature"
     );
@@ -247,7 +264,15 @@ fn an_action_outside_the_allow_list_is_refused() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(&d, AUDIENCE, &delegate.public_key(), b"delete_account", None, NOW).unwrap_err(),
+        authorise(
+            &d,
+            AUDIENCE,
+            &delegate.public_key(),
+            b"delete_account",
+            None,
+            NOW
+        )
+        .unwrap_err(),
         AuthError::NotDelegated
     );
 }
@@ -277,7 +302,15 @@ fn an_amount_with_no_ceiling_set_is_refused_rather_than_unlimited() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, bounds);
 
     assert_eq!(
-        authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", Some(1), NOW).unwrap_err(),
+        authorise(
+            &d,
+            AUDIENCE,
+            &delegate.public_key(),
+            b"transfer",
+            Some(1),
+            NOW
+        )
+        .unwrap_err(),
         AuthError::NotDelegated,
         "reading an absent ceiling as unlimited turns a forgetful principal \
          into an unbounded one"
@@ -291,11 +324,27 @@ fn an_amount_over_the_per_invocation_ceiling_is_refused() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", Some(501), NOW).unwrap_err(),
+        authorise(
+            &d,
+            AUDIENCE,
+            &delegate.public_key(),
+            b"transfer",
+            Some(501),
+            NOW
+        )
+        .unwrap_err(),
         AuthError::NotDelegated
     );
     assert!(
-        authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", Some(500), NOW).is_ok(),
+        authorise(
+            &d,
+            AUDIENCE,
+            &delegate.public_key(),
+            b"transfer",
+            Some(500),
+            NOW
+        )
+        .is_ok(),
         "the ceiling is inclusive"
     );
 }
@@ -306,10 +355,26 @@ fn crossing_the_approval_threshold_reports_an_obligation_rather_than_refusing() 
     let delegate = identity(49);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
-    let under = authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", Some(250), NOW).unwrap();
+    let under = authorise(
+        &d,
+        AUDIENCE,
+        &delegate.public_key(),
+        b"transfer",
+        Some(250),
+        NOW,
+    )
+    .unwrap();
     assert!(!under.human_approval_required, "the threshold is exclusive");
 
-    let over = authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", Some(251), NOW).unwrap();
+    let over = authorise(
+        &d,
+        AUDIENCE,
+        &delegate.public_key(),
+        b"transfer",
+        Some(251),
+        NOW,
+    )
+    .unwrap();
     assert!(
         over.human_approval_required,
         "above the threshold the caller must obtain a human approval, which \
@@ -345,12 +410,16 @@ fn tampering_with_any_bound_invalidates_the_signature() {
         ("raise the per-invocation ceiling", |d| {
             d.bounds.max_per_invocation = Some(1_000_000)
         }),
-        ("add an action", |d| d.bounds.actions.push(b"delete".to_vec())),
+        ("add an action", |d| {
+            d.bounds.actions.push(b"delete".to_vec())
+        }),
         ("remove the approval threshold", |d| {
             d.bounds.approval_required_above = None
         }),
         ("extend the window", |d| d.expires_at += 86_400),
-        ("raise the total over the window", |d| d.bounds.max_total = Some(1_000_000)),
+        ("raise the total over the window", |d| {
+            d.bounds.max_total = Some(1_000_000)
+        }),
         ("shorten the window the total applies over", |d| {
             d.bounds.window_secs = Some(60)
         }),
@@ -415,7 +484,10 @@ fn only_the_principal_can_approve_an_over_threshold_request() {
         NOW,
     )
     .expect("400 is within the per-invocation ceiling");
-    assert!(obligations.human_approval_required, "400 is above the 250 threshold");
+    assert!(
+        obligations.human_approval_required,
+        "400 is above the 250 threshold"
+    );
 
     let action = [0x40; 32];
     let nonces = InMemoryNonceStore::new();
@@ -456,7 +528,10 @@ fn a_login_is_not_an_approval_even_from_the_principal() {
         method: AuthMethod::LoginProof,
         session_commitment: None,
     };
-    assert_eq!(check_approval(&d, &as_login).unwrap_err(), AuthError::NotAuthorised);
+    assert_eq!(
+        check_approval(&d, &as_login).unwrap_err(),
+        AuthError::NotAuthorised
+    );
 
     let as_step_up = AuthenticatedIdentity {
         method: AuthMethod::StepUp,
@@ -478,7 +553,10 @@ fn an_approval_from_another_audience_is_refused() {
         method: AuthMethod::StepUp,
         session_commitment: None,
     };
-    assert_eq!(check_approval(&d, &elsewhere).unwrap_err(), AuthError::AudienceMismatch);
+    assert_eq!(
+        check_approval(&d, &elsewhere).unwrap_err(),
+        AuthError::AudienceMismatch
+    );
 }
 
 // ── Delegation id ────────────────────────────────────────────────────────────
@@ -489,16 +567,28 @@ fn a_delegation_id_is_stable_and_tracks_every_signed_field() {
     let delegate = identity(67);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
-    assert_eq!(d.id(), d.clone().id(), "the same delegation has the same id");
+    assert_eq!(
+        d.id(),
+        d.clone().id(),
+        "the same delegation has the same id"
+    );
 
     let mut changed = d.clone();
     changed.bounds.max_total = Some(9_999);
-    assert_ne!(d.id(), changed.id(), "a different budget is a different delegation");
+    assert_ne!(
+        d.id(),
+        changed.id(),
+        "a different budget is a different delegation"
+    );
 
     let mut resigned = d.clone();
     resigned.signature[0] ^= 0x01;
     assert_ne!(d.id(), resigned.id(), "the id covers the signature");
 
     let other = make_delegation(&identity(68), &delegate, AUDIENCE, spend_bounds());
-    assert_ne!(d.id(), other.id(), "another principal's grant is another delegation");
+    assert_ne!(
+        d.id(),
+        other.id(),
+        "another principal's grant is another delegation"
+    );
 }

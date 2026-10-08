@@ -97,7 +97,13 @@ fn a_login_proof_from_the_cli_verifies() {
     let ws = Workspace::new("login");
     ws.create_identity();
 
-    let (stdout, _) = ws.run(&["login", "--identity", "id.json", "--passphrase-file", "pass"]);
+    let (stdout, _) = ws.run(&[
+        "login",
+        "--identity",
+        "id.json",
+        "--passphrase-file",
+        "pass",
+    ]);
     let proof: LoginProof = serde_json::from_str(&stdout).expect("cli emits a LoginProof");
 
     let out = block_on(verify_login(&proof, params(), &InMemoryNonceStore::new()))
@@ -188,7 +194,13 @@ fn an_identity_is_bound_to_one_audience() {
     let ws = Workspace::new("audience");
     ws.create_identity();
 
-    let (stdout, stderr) = ws.run(&["login", "--identity", "id.json", "--passphrase-file", "pass"]);
+    let (stdout, stderr) = ws.run(&[
+        "login",
+        "--identity",
+        "id.json",
+        "--passphrase-file",
+        "pass",
+    ]);
     let proof: LoginProof = serde_json::from_str(&stdout).unwrap();
 
     assert!(
@@ -215,7 +227,13 @@ fn the_wrong_passphrase_is_refused() {
 
     let out = Command::new(env!("CARGO_BIN_EXE_aethel-auth-cli"))
         .current_dir(&ws.dir)
-        .args(["login", "--identity", "id.json", "--passphrase-file", "wrong"])
+        .args([
+            "login",
+            "--identity",
+            "id.json",
+            "--passphrase-file",
+            "wrong",
+        ])
         .output()
         .expect("run");
 

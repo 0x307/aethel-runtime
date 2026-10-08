@@ -81,7 +81,9 @@ impl<'de> Visitor<'de> for BytesVisitor {
 }
 
 fn to_array<E: de::Error>(bytes: Vec<u8>) -> Result<[u8; 32], E> {
-    bytes.try_into().map_err(|v: Vec<u8>| E::invalid_length(v.len(), &"32 bytes"))
+    bytes
+        .try_into()
+        .map_err(|v: Vec<u8>| E::invalid_length(v.len(), &"32 bytes"))
 }
 
 /// `Vec<u8>`.
@@ -146,7 +148,10 @@ pub mod vec_bytes {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Vec<u8>>, D::Error> {
         #[derive(Deserialize)]
         struct Wrapped(#[serde(with = "super::bytes")] Vec<u8>);
-        Ok(Vec::<Wrapped>::deserialize(d)?.into_iter().map(|w| w.0).collect())
+        Ok(Vec::<Wrapped>::deserialize(d)?
+            .into_iter()
+            .map(|w| w.0)
+            .collect())
     }
 }
 
@@ -158,7 +163,11 @@ mod tests {
     fn round_trips_every_length() {
         for len in 0..70 {
             let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
-            assert_eq!(decode(&encode(&bytes)).as_deref(), Some(bytes.as_slice()), "length {len}");
+            assert_eq!(
+                decode(&encode(&bytes)).as_deref(),
+                Some(bytes.as_slice()),
+                "length {len}"
+            );
         }
     }
 
@@ -166,7 +175,11 @@ mod tests {
     fn matches_the_standard_alphabet_without_padding() {
         assert_eq!(encode(b"\xfb\xff"), "-_8");
         assert_eq!(encode(b"hello"), "aGVsbG8");
-        assert_eq!(decode("aGVsbG8=").unwrap(), b"hello", "padding is tolerated on input");
+        assert_eq!(
+            decode("aGVsbG8=").unwrap(),
+            b"hello",
+            "padding is tolerated on input"
+        );
         assert!(decode("a").is_none() && decode("a*bc").is_none());
     }
 }

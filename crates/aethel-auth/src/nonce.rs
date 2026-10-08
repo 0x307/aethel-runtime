@@ -140,7 +140,10 @@ mod tests {
         let store = InMemoryNonceStore::new();
         let nonce = [9u8; 32];
 
-        assert!(block_on(store.claim(&nonce, 1_000)).unwrap(), "first claim wins");
+        assert!(
+            block_on(store.claim(&nonce, 1_000)).unwrap(),
+            "first claim wins"
+        );
         assert!(
             !block_on(store.claim(&nonce, 1_000)).unwrap(),
             "the same nonce must not be claimable twice: that is the replay"

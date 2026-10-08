@@ -171,7 +171,10 @@ fn nobody_but_the_outgoing_key_can_name_a_successor() {
     let attacker = identity(73);
     let authority = identity(74);
 
-    for (label, signer) in [("an attacker", &attacker), ("a revocation authority", &authority)] {
+    for (label, signer) in [
+        ("an attacker", &attacker),
+        ("a revocation authority", &authority),
+    ] {
         let s = sign_succession(
             signer,
             Succession {

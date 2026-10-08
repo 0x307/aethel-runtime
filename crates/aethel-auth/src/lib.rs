@@ -89,12 +89,10 @@ pub use error::{AuthError, StoreError};
 pub use holder::{revoke_as_authority, Holder};
 pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
-    key_fingerprint, verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity, LoginProof,
-    StepUpProof, VerifyParams,
+    key_fingerprint, verify_login, verify_step_up, AuthMethod, AuthStrength, AuthenticatedIdentity,
+    LoginProof, StepUpProof, VerifyParams,
 };
-pub use statements::{
-    verify_revocation, verify_succession, RevokedBy, Revocation, Succession,
-};
+pub use statements::{verify_revocation, verify_succession, Revocation, RevokedBy, Succession};
 
 /// Re-exported so consumers verify under the same registry entries this crate
 /// signs under, rather than defining their own bytes.
@@ -112,8 +110,7 @@ pub use aethel_core::signing::purpose;
 /// another, rather than a rule callers have to remember.
 pub mod purposes {
     pub use aethel_core::signing::purpose::{
-        AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1,
-        AUTH_SUCCESSION_V1,
+        AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
     };
 }
 
@@ -307,8 +304,13 @@ version = \"0.13\"
         );
 
         assert!(
-            !verify_with_purpose(&public, super::purposes::AUTH_STEP_UP_V1, message, &signature)
-                .expect("well-formed inputs"),
+            !verify_with_purpose(
+                &public,
+                super::purposes::AUTH_STEP_UP_V1,
+                message,
+                &signature
+            )
+            .expect("well-formed inputs"),
             "a login signature must NOT verify as a step-up: same key, same bytes, \
              different purpose"
         );

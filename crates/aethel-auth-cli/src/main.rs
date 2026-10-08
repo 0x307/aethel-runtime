@@ -57,7 +57,11 @@ impl std::fmt::Display for CliError {
 }
 
 #[derive(Parser)]
-#[command(name = "aethel-auth", about = "Terminal signer for aethel-auth", version)]
+#[command(
+    name = "aethel-auth",
+    about = "Terminal signer for aethel-auth",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -391,7 +395,12 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 None => emit(&Holder::new(&id, file.audience_bytes()).revoke_self(now())),
                 Some(hex_key) => {
                     let subject = decode_key(&hex_key, "subject public key")?;
-                    emit(&revoke_as_authority(&id, subject, file.audience_bytes(), now()))
+                    emit(&revoke_as_authority(
+                        &id,
+                        subject,
+                        file.audience_bytes(),
+                        now(),
+                    ))
                 }
             }
         }

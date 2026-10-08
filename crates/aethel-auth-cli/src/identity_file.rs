@@ -11,8 +11,8 @@
 //! can document it and the `Holder` type can encourage it; only the tool a
 //! person actually runs can make the wrong thing impossible to type.
 
-use zeroize::Zeroizing;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 use aethel_core::signing::Identity;
 use argon2::Argon2;
@@ -120,7 +120,8 @@ impl IdentityFile {
         let mut salt = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut salt);
 
-        let identity = Identity::generate(&entropy[..]).map_err(|_| CliError::Crypto("generate"))?;
+        let identity =
+            Identity::generate(&entropy[..]).map_err(|_| CliError::Crypto("generate"))?;
         let kdf = KdfParams::fresh(salt);
         let key = kdf.derive(passphrase)?;
         let sealed = identity
@@ -186,7 +187,9 @@ impl IdentityFile {
         // out. A mismatch means the file was edited, and signing with a key
         // the holder does not expect is worse than refusing.
         if hex::encode(identity.public_key()) != self.public_key {
-            return Err(CliError::Corrupt("public key does not match the sealed identity"));
+            return Err(CliError::Corrupt(
+                "public key does not match the sealed identity",
+            ));
         }
 
         Ok(identity)
