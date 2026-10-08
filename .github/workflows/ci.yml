@@ -124,3 +124,64 @@ jobs:
       - name: Build packaged artifact
         working-directory: ${{ env.PKG_DIR }}
         run: cargo build --verbose
+
+  # aethel-auth and its CLI are workspace members, not the root package, so
+  # the jobs above (plain `cargo build` / `cargo test` at the root) never
+  # compile or test them. This job does, in every feature set the crate
+  # documents, and it tests the packaged .crate as well as the tree: the
+  # published manifest is rewritten by `cargo package`, and a test that passed
+  # in the repository once failed only in the package.
+  aethel-auth:
+    name: aethel-auth (features, CLI, lints, MSRV, packaged artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fresh clone, no cache)
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (fresh, no cache)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Test (default features)
+        run: cargo test --locked -p aethel-auth
+
+      - name: Test (holder)
+        run: cargo test --locked -p aethel-auth --features holder
+
+      - name: Test (verify only, no serde)
+        run: cargo test --locked -p aethel-auth --no-default-features --features std,verify
+
+      - name: Test the CLI
+        run: cargo test --locked -p aethel-auth-cli
+
+      - name: Clippy, warnings denied
+        run: cargo clippy --locked -p aethel-auth -p aethel-auth-cli --all-features --all-targets -- -D warnings
+
+      - name: Rustdoc, warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked -p aethel-auth --no-deps --all-features
+
+      - name: Package aethel-auth
+        run: cargo package --locked -p aethel-auth
+
+      - name: Test the packaged artifact
+        run: |
+          mkdir -p /tmp/aethel-auth-pkg
+          tar xzf target/package/aethel-auth-*.crate -C /tmp/aethel-auth-pkg
+          cd "$(find /tmp/aethel-auth-pkg -mindepth 1 -maxdepth 1 -type d)"
+          cargo test --features holder
+
+  aethel-auth-msrv:
+    name: aethel-auth MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (fresh clone, no cache)
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@1.85
+
+      - name: cargo check on the declared MSRV
+        run: cargo check --locked -p aethel-auth --all-features
