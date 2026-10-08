@@ -36,6 +36,21 @@
 //! "this one delegation, everywhere". That object would be a cross-verifier
 //! correlator by construction.
 //!
+//! # Ending a delegation
+//!
+//! A delegation ends at `expires_at`, or when the relying party stops
+//! honouring one of its two keys. This release has no statement that revokes
+//! one delegation and leaves the principal's others standing. A principal
+//! ends its delegates' authority at a relying party by revoking **its own**
+//! key there (`Holder::revoke_self`, behind the `holder` feature), which ends
+//! every delegation it issued at that relying party.
+//!
+//! So a relying party must refuse a delegation whose `principal_key` or
+//! `delegate_key` it has seen a verified revocation for. [`authorise`] cannot
+//! check that, because the set of revoked keys is the relying party's state.
+//! [`Delegation::id`] gives it a stable key to track a delegation by, for that
+//! and for the running total.
+//!
 //! # No sub-delegation
 //!
 //! A delegate cannot re-delegate. Not an oversight: each hop multiplies the
@@ -45,7 +60,7 @@
 use aethel_core::signing::verify_with_purpose;
 
 use crate::error::AuthError;
-use crate::proof::push_len_prefixed;
+use crate::proof::{push_len_prefixed, shake256_32, AuthMethod, AuthenticatedIdentity};
 use crate::purposes::AUTH_DELEGATION_V1;
 
 /// What a delegate is permitted to do.
@@ -147,9 +162,36 @@ impl Delegation {
 
         out
     }
+
+    /// A stable 32-byte identifier for this delegation, for a relying party's
+    /// own bookkeeping: the running total over `window_secs`, and refusing a
+    /// delegation once either of its keys is revoked.
+    ///
+    /// `SHAKE-256` over a domain label, the principal key, the signed bytes and
+    /// the signature, each length-prefixed. Two delegations with identical
+    /// terms signed separately get different identifiers, because ML-DSA
+    /// signatures are randomised. That is deliberate: each grant is its own
+    /// budget.
+    ///
+    /// Not a cross-relying-party identifier: a delegation is valid at one
+    /// audience, and so is its id. Do not publish it anywhere that audience
+    /// is not.
+    pub fn id(&self) -> [u8; 32] {
+        let mut input = Vec::with_capacity(5_600 + self.audience.len());
+        push_len_prefixed(&mut input, b"aethel-auth/delegation-id/v1");
+        push_len_prefixed(&mut input, &self.principal_key);
+        push_len_prefixed(&mut input, &self.signing_input());
+        push_len_prefixed(&mut input, &self.signature);
+        shake256_32(&input)
+    }
 }
 
 /// What the relying party must still enforce after [`authorise`] succeeds.
+///
+/// Three things only the relying party can do, because only it holds the
+/// state: keep the running total, obtain the principal's approval, and refuse
+/// a delegation whose keys it has seen revoked (see "Ending a delegation" in
+/// this module's docs).
 ///
 /// Returned rather than checked, because this crate holds no running totals
 /// and cannot ask a human. Returning it makes the remaining obligation
@@ -162,8 +204,14 @@ pub struct RemainingObligations {
     pub cumulative_ceiling: Option<u128>,
     /// The window the ceiling applies over.
     pub window_secs: Option<u64>,
-    /// This invocation is above the principal's approval threshold. Obtain a
-    /// human approval before proceeding.
+    /// This invocation is above the principal's approval threshold. Do not
+    /// proceed until the **principal** has signed a step-up for this action.
+    ///
+    /// Verify that step-up with [`crate::verify_step_up`], then pass the
+    /// result to [`check_approval`]. The step-up must come from the
+    /// delegation's `principal_key`: a step-up from the delegate is the agent
+    /// approving itself, and `verify_step_up` alone does not know which key
+    /// it should be.
     pub human_approval_required: bool,
 }
 
@@ -259,4 +307,30 @@ pub fn authorise(
         window_secs: delegation.bounds.window_secs,
         human_approval_required,
     })
+}
+
+/// Check that a verified step-up approves a request under this delegation.
+///
+/// `approval` is what [`crate::verify_step_up`] returned for the step-up the
+/// relying party asked for, with the action digest of the request being
+/// approved. This adds the check that call cannot make: the step-up was
+/// signed by the delegation's **principal**, at the delegation's audience.
+///
+/// Refuses a step-up from the delegate (the agent approving its own request),
+/// from any other key, and anything established by a mechanism other than a
+/// step-up, such as a login proof.
+pub fn check_approval(
+    delegation: &Delegation,
+    approval: &AuthenticatedIdentity,
+) -> Result<(), AuthError> {
+    if approval.method != AuthMethod::StepUp {
+        return Err(AuthError::NotAuthorised);
+    }
+    if approval.audience != delegation.audience {
+        return Err(AuthError::AudienceMismatch);
+    }
+    if approval.public_key != delegation.principal_key {
+        return Err(AuthError::NotAuthorised);
+    }
+    Ok(())
 }

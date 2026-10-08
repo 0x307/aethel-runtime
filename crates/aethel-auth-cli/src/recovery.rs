@@ -32,6 +32,7 @@
 //! the old one is known. That is why `identity new` arranges recovery by
 //! default and opting out takes a flag.
 
+use zeroize::Zeroizing;
 use std::path::Path;
 
 use aethel_core::htss::{HtssShare, SecretSharer};
@@ -80,7 +81,7 @@ pub fn split(entropy: &[u8], audience: &str) -> Result<(Vec<ShareFile>, String),
 }
 
 /// Reconstruct entropy from at least the threshold number of shares.
-pub fn combine(files: &[ShareFile], root_hex: &str) -> Result<Vec<u8>, CliError> {
+pub fn combine(files: &[ShareFile], root_hex: &str) -> Result<Zeroizing<Vec<u8>>, CliError> {
     let root_bytes = hex::decode(root_hex).map_err(|_| CliError::Corrupt("root"))?;
     let root: [u8; 32] = root_bytes
         .try_into()
@@ -97,10 +98,12 @@ pub fn combine(files: &[ShareFile], root_hex: &str) -> Result<Vec<u8>, CliError>
         })
         .collect::<Result<_, CliError>>()?;
 
-    SecretSharer::reconstruct_key_material(&shares, &root).map_err(|e| match e {
-        aethel_core::IdentityError::ThresholdNotMet => CliError::NotEnoughShares,
-        _ => CliError::Crypto("htss reconstruct"),
-    })
+    SecretSharer::reconstruct_key_material(&shares, &root)
+        .map(Zeroizing::new)
+        .map_err(|e| match e {
+            aethel_core::IdentityError::ThresholdNotMet => CliError::NotEnoughShares,
+            _ => CliError::Crypto("htss reconstruct"),
+        })
 }
 
 pub fn read_share(path: &Path) -> Result<ShareFile, CliError> {

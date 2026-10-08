@@ -2,7 +2,7 @@
 //!
 //! The holder builds the whole thing itself — its own nonce, its own validity
 //! window, the audience it intends — signs it under
-//! [`AUTH_LOGIN_V1`](crate::purposes::AUTH_LOGIN_V1), and sends it once. There
+//! [`AUTH_LOGIN_V1`], and sends it once. There
 //! is no server-issued challenge to fetch first.
 //!
 //! # One proof per request
@@ -204,6 +204,21 @@ pub(crate) fn check_envelope(
     Ok(())
 }
 
+/// How long a nonce store must remember a claimed nonce.
+///
+/// A proof is accepted only while it is unexpired **and** no older than
+/// `max_age_secs`, so the nonce has to be remembered until the earlier of the
+/// two, and no longer. Using `expires_at` alone would let a holder that picked
+/// a far-future expiry keep a store entry alive indefinitely. The `+ 1` covers
+/// the last second at which [`check_envelope`] still accepts the proof.
+pub(crate) fn nonce_retention(issued_at: u64, expires_at: u64, params: &VerifyParams<'_>) -> u64 {
+    expires_at.min(
+        issued_at
+            .saturating_add(params.max_age_secs)
+            .saturating_add(1),
+    )
+}
+
 /// A short, human-comparable name for a public key.
 ///
 /// An ML-DSA-65 public key is 1,952 bytes, which is 3,904 hex characters. A
@@ -281,7 +296,10 @@ pub async fn verify_login<N: NonceStore>(
         return Err(AuthError::BadSignature);
     }
 
-    if !nonces.claim(&proof.nonce, proof.expires_at).await? {
+    if !nonces
+        .claim(&proof.nonce, nonce_retention(proof.issued_at, proof.expires_at, &params))
+        .await?
+    {
         return Err(AuthError::NonceAlreadyUsed);
     }
 
@@ -322,7 +340,10 @@ pub async fn verify_login<N: NonceStore>(
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepUpProof {
-    /// ML-DSA-65 public key. The same per-relying-party identity that logged in.
+    /// ML-DSA-65 public key of whoever is consenting. For approving a
+    /// delegated request above its threshold, that is the delegation's
+    /// **principal**, not the agent that logged in; see
+    /// [`crate::check_approval`].
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub public_key: Vec<u8>,
     /// The relying party this step-up is for.
@@ -399,7 +420,10 @@ pub async fn verify_step_up<N: NonceStore>(
         return Err(AuthError::BadSignature);
     }
 
-    if !nonces.claim(&proof.nonce, proof.expires_at).await? {
+    if !nonces
+        .claim(&proof.nonce, nonce_retention(proof.issued_at, proof.expires_at, &params))
+        .await?
+    {
         return Err(AuthError::NonceAlreadyUsed);
     }
 

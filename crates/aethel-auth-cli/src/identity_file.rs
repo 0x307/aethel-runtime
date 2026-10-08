@@ -11,6 +11,7 @@
 //! can document it and the `Holder` type can encourage it; only the tool a
 //! person actually runs can make the wrong thing impossible to type.
 
+use zeroize::Zeroizing;
 use std::path::Path;
 
 use aethel_core::signing::Identity;
@@ -48,15 +49,15 @@ impl KdfParams {
         }
     }
 
-    fn derive(&self, passphrase: &[u8]) -> Result<[u8; SEAL_KEY_LEN], CliError> {
+    fn derive(&self, passphrase: &[u8]) -> Result<Zeroizing<[u8; SEAL_KEY_LEN]>, CliError> {
         let salt = hex::decode(&self.salt).map_err(|_| CliError::Corrupt("kdf salt"))?;
         let params = argon2::Params::new(self.m_cost, self.t_cost, self.p_cost, Some(SEAL_KEY_LEN))
             .map_err(|_| CliError::Corrupt("kdf parameters"))?;
         let argon = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
-        let mut key = [0u8; SEAL_KEY_LEN];
+        let mut key = Zeroizing::new([0u8; SEAL_KEY_LEN]);
         argon
-            .hash_password_into(passphrase, &salt, &mut key)
+            .hash_password_into(passphrase, &salt, &mut key[..])
             .map_err(|_| CliError::Corrupt("kdf"))?;
         Ok(key)
     }
@@ -111,19 +112,19 @@ impl IdentityFile {
     pub fn create(
         audience: &str,
         passphrase: &[u8],
-    ) -> Result<(Self, [u8; 32]), CliError> {
+    ) -> Result<(Self, Zeroizing<[u8; 32]>), CliError> {
         use rand::RngCore;
 
-        let mut entropy = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut entropy);
+        let mut entropy = Zeroizing::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(&mut entropy[..]);
         let mut salt = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut salt);
 
-        let identity = Identity::generate(&entropy).map_err(|_| CliError::Crypto("generate"))?;
+        let identity = Identity::generate(&entropy[..]).map_err(|_| CliError::Crypto("generate"))?;
         let kdf = KdfParams::fresh(salt);
         let key = kdf.derive(passphrase)?;
         let sealed = identity
-            .export_sealed(&key)
+            .export_sealed(&key[..])
             .map_err(|_| CliError::Crypto("seal"))?;
 
         Ok((
@@ -157,7 +158,7 @@ impl IdentityFile {
         let kdf = KdfParams::fresh(salt);
         let key = kdf.derive(passphrase)?;
         let sealed = identity
-            .export_sealed(&key)
+            .export_sealed(&key[..])
             .map_err(|_| CliError::Crypto("seal"))?;
 
         Ok(IdentityFile {
@@ -179,7 +180,7 @@ impl IdentityFile {
         let sealed = hex::decode(&self.sealed).map_err(|_| CliError::Corrupt("sealed blob"))?;
 
         let identity =
-            Identity::import_sealed(&sealed, &key).map_err(|_| CliError::WrongPassphrase)?;
+            Identity::import_sealed(&sealed, &key[..]).map_err(|_| CliError::WrongPassphrase)?;
 
         // The file's own claim about which key it holds must match what came
         // out. A mismatch means the file was edited, and signing with a key

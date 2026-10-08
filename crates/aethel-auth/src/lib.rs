@@ -37,8 +37,9 @@
 //!
 //! # Verifier-first
 //!
-//! The default build verifies and holds no secret. It depends on
-//! `aethel-core` alone: no WASM runtime, no wallet, no ECDSA. Producing
+//! The default build verifies and holds no secret. Its runtime dependencies
+//! are `aethel-core`, `sha3`, `subtle` and, by default, `serde`: no WASM
+//! runtime, no wallet, no ECDSA. Producing
 //! statements is the holder's side and lives behind the `holder` feature,
 //! because a server should not link that machinery by accident.
 //!
@@ -64,6 +65,9 @@
 //! statements, with builders for all of them behind the `holder` feature.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+// No unsafe code in the library. Test executors use a no-op waker, which is
+// why this is relaxed under `cfg(test)` and nowhere else.
+#![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(missing_docs)]
 
 #[cfg(feature = "serde")]
@@ -77,7 +81,9 @@ pub mod nonce;
 pub mod proof;
 pub mod statements;
 
-pub use delegation::{authorise, verify_delegation, Bounds, Delegation, RemainingObligations};
+pub use delegation::{
+    authorise, check_approval, verify_delegation, Bounds, Delegation, RemainingObligations,
+};
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]
 pub use holder::{revoke_as_authority, Holder};
@@ -139,33 +145,130 @@ mod tests {
     /// `aethel-core` itself uses, and constant-time comparison is not
     /// something to hand-roll next to a MAC. What the list forbids is anything
     /// that would make a verifier carry holder-side or wallet machinery.
+    /// Crates a default (verifier) build must never depend on.
+    const FORBIDDEN_IN_DEFAULT_BUILD: [&str; 7] = [
+        "wasmtime",     // a verifier must not need a WASM engine
+        "wasm-bindgen", // browser glue belongs on the holder side
+        "tfhe",         // the vault's confidential ledger, not ours
+        "k256",         // no ECDSA in this repository's own signatures
+        "secp256k1",
+        "alloy",
+        "ethers",
+    ];
+
+    /// The runtime-dependency tables of a manifest, in either shape Cargo
+    /// writes.
+    ///
+    /// The repository's manifest has one `[dependencies]` table. The manifest
+    /// inside a published `.crate` is rewritten by `cargo package` into one
+    /// `[dependencies.<name>]` table per crate. An earlier version of this
+    /// test only understood the first shape, so it passed in the repository
+    /// and panicked in the published crate. Both shapes are read here, and
+    /// target-specific dependency tables count as runtime dependencies too.
+    /// `[dev-dependencies]`, `[build-dependencies]` and feature lists do not.
+    fn runtime_dependency_tables(manifest: &str) -> String {
+        let mut out = String::new();
+        let mut inside = false;
+        for line in manifest.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                let header = trimmed.trim_start_matches('[').trim_end_matches(']');
+                inside = header == "dependencies"
+                    || header.starts_with("dependencies.")
+                    || (header.starts_with("target.")
+                        && (header.ends_with(".dependencies")
+                            || header.contains(".dependencies.")));
+            }
+            if inside {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
     #[test]
     fn default_build_stays_verifier_only() {
-        let manifest = include_str!("../Cargo.toml");
+        let deps = runtime_dependency_tables(include_str!("../Cargo.toml"));
 
-        // Everything from `[dependencies]` to the end of the file. Feature
-        // declarations above it may legitimately *name* these crates.
-        let deps = manifest
-            .split_once("\n[dependencies]")
-            .expect("manifest has a [dependencies] section")
-            .1;
+        // Not vacuous: the tables were found, in whichever shape this
+        // manifest is in.
+        assert!(
+            deps.contains("aethel-core"),
+            "no runtime dependency tables found; the parser no longer matches this manifest"
+        );
 
-        for forbidden in [
-            "wasmtime",     // a verifier must not need a WASM engine
-            "wasm-bindgen", // browser glue belongs on the holder side
-            "tfhe",         // the vault's confidential ledger, not ours
-            "k256",         // no ECDSA in this repository's own signatures
-            "secp256k1",
-            "alloy",
-            "ethers",
-        ] {
+        for forbidden in FORBIDDEN_IN_DEFAULT_BUILD {
             assert!(
                 !deps.contains(forbidden),
-                "`{forbidden}` appears in [dependencies]. The default build is \
-                 verification only and depends on aethel-core alone; a holder-side \
-                 or wallet dependency belongs behind an opt-in feature, if anywhere."
+                "`{forbidden}` appears in the runtime dependencies. The default build is \
+                 verification only: no WASM runtime, wallet or classical asymmetric \
+                 crypto. A holder-side or wallet dependency belongs behind an opt-in \
+                 feature, if anywhere."
             );
         }
+    }
+
+    /// Positive control for the test above: a forbidden crate is caught in
+    /// both manifest shapes, and a dev-dependency or a feature list that
+    /// merely names one is not.
+    #[test]
+    fn the_dependency_guard_reads_both_manifest_shapes() {
+        let repository_shape = "[features]
+holder = [\"k256\"]
+
+[dependencies]
+aethel-core = \"0.7\"
+k256 = \"0.13\"
+
+[dev-dependencies]
+criterion = \"0.5\"
+";
+        let packaged_shape = "[features]
+holder = []
+
+[dependencies.aethel-core]
+version = \"0.7\"
+
+[dependencies.k256]
+version = \"0.13\"
+
+[dev-dependencies.criterion]
+version = \"0.5\"
+";
+        let target_shape = "[dependencies]
+aethel-core = \"0.7\"
+
+[target.'cfg(unix)'.dependencies]
+k256 = \"0.13\"
+";
+        let clean_packaged = "[features]
+holder = [\"k256\"]
+
+[dependencies.aethel-core]
+version = \"0.7\"
+
+[dev-dependencies.k256]
+version = \"0.13\"
+";
+
+        for (label, manifest) in [
+            ("repository", repository_shape),
+            ("packaged", packaged_shape),
+            ("target-specific", target_shape),
+        ] {
+            assert!(
+                runtime_dependency_tables(manifest).contains("k256"),
+                "the {label} shape hid a forbidden runtime dependency"
+            );
+        }
+
+        let deps = runtime_dependency_tables(clean_packaged);
+        assert!(deps.contains("aethel-core"));
+        assert!(
+            !deps.contains("k256"),
+            "a dev-dependency or a feature list must not count as a runtime dependency"
+        );
     }
 
     /// The purpose registry is central. If this stops compiling, the

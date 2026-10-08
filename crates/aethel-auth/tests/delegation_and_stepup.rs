@@ -4,8 +4,9 @@
 //! defaulted. Every case where a field was left unset asserts a refusal.
 
 use aethel_auth::{
-    authorise, purposes, verify_delegation, verify_step_up, AuthError, AuthMethod, Bounds,
-    Delegation, InMemoryNonceStore, StepUpProof, VerifyParams,
+    authorise, check_approval, purposes, verify_delegation, verify_step_up, AuthError,
+    AuthMethod, AuthStrength, AuthenticatedIdentity, Bounds, Delegation, InMemoryNonceStore,
+    StepUpProof, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -340,7 +341,7 @@ fn tampering_with_any_bound_invalidates_the_signature() {
     let delegate = identity(53);
 
     type Mutation = (&'static str, fn(&mut Delegation));
-    let mutations: [Mutation; 4] = [
+    let mutations: [Mutation; 7] = [
         ("raise the per-invocation ceiling", |d| {
             d.bounds.max_per_invocation = Some(1_000_000)
         }),
@@ -349,6 +350,11 @@ fn tampering_with_any_bound_invalidates_the_signature() {
             d.bounds.approval_required_above = None
         }),
         ("extend the window", |d| d.expires_at += 86_400),
+        ("raise the total over the window", |d| d.bounds.max_total = Some(1_000_000)),
+        ("shorten the window the total applies over", |d| {
+            d.bounds.window_secs = Some(60)
+        }),
+        ("start the delegation earlier", |d| d.not_before -= 86_400),
     ];
 
     for (label, mutate) in mutations {
@@ -387,4 +393,112 @@ fn none_and_some_zero_are_different_grants() {
         "\"I set no ceiling\" and \"I set a ceiling of zero\" are different \
          statements and must not encode alike"
     );
+}
+
+// ── Approval above the threshold ─────────────────────────────────────────────
+
+/// The principal's step-up approves; the agent's own step-up, for the same
+/// action at the same audience, does not. Both halves in one test, so the
+/// refusal cannot pass by refusing everything.
+#[test]
+fn only_the_principal_can_approve_an_over_threshold_request() {
+    let principal = identity(60);
+    let delegate = identity(61);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+
+    let obligations = authorise(
+        &d,
+        AUDIENCE,
+        &delegate.public_key(),
+        b"transfer",
+        Some(400),
+        NOW,
+    )
+    .expect("400 is within the per-invocation ceiling");
+    assert!(obligations.human_approval_required, "400 is above the 250 threshold");
+
+    let action = [0x40; 32];
+    let nonces = InMemoryNonceStore::new();
+
+    let from_principal = block_on(verify_step_up(
+        &make_step_up(&principal, AUDIENCE, [60u8; 32], action),
+        params(),
+        &action,
+        &nonces,
+    ))
+    .expect("a valid step-up");
+    check_approval(&d, &from_principal).expect("the principal approves");
+
+    let from_agent = block_on(verify_step_up(
+        &make_step_up(&delegate, AUDIENCE, [61u8; 32], action),
+        params(),
+        &action,
+        &nonces,
+    ))
+    .expect("a valid step-up, by the wrong key");
+    assert_eq!(
+        check_approval(&d, &from_agent).unwrap_err(),
+        AuthError::NotAuthorised,
+        "the agent must not be able to approve its own request"
+    );
+}
+
+#[test]
+fn a_login_is_not_an_approval_even_from_the_principal() {
+    let principal = identity(62);
+    let delegate = identity(63);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+
+    let as_login = AuthenticatedIdentity {
+        public_key: principal.public_key(),
+        audience: AUDIENCE.to_vec(),
+        strength: AuthStrength::Proven,
+        method: AuthMethod::LoginProof,
+        session_commitment: None,
+    };
+    assert_eq!(check_approval(&d, &as_login).unwrap_err(), AuthError::NotAuthorised);
+
+    let as_step_up = AuthenticatedIdentity {
+        method: AuthMethod::StepUp,
+        ..as_login
+    };
+    check_approval(&d, &as_step_up).expect("the same key, as a step-up, approves");
+}
+
+#[test]
+fn an_approval_from_another_audience_is_refused() {
+    let principal = identity(64);
+    let delegate = identity(65);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+
+    let elsewhere = AuthenticatedIdentity {
+        public_key: principal.public_key(),
+        audience: OTHER_AUDIENCE.to_vec(),
+        strength: AuthStrength::Proven,
+        method: AuthMethod::StepUp,
+        session_commitment: None,
+    };
+    assert_eq!(check_approval(&d, &elsewhere).unwrap_err(), AuthError::AudienceMismatch);
+}
+
+// ── Delegation id ────────────────────────────────────────────────────────────
+
+#[test]
+fn a_delegation_id_is_stable_and_tracks_every_signed_field() {
+    let principal = identity(66);
+    let delegate = identity(67);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+
+    assert_eq!(d.id(), d.clone().id(), "the same delegation has the same id");
+
+    let mut changed = d.clone();
+    changed.bounds.max_total = Some(9_999);
+    assert_ne!(d.id(), changed.id(), "a different budget is a different delegation");
+
+    let mut resigned = d.clone();
+    resigned.signature[0] ^= 0x01;
+    assert_ne!(d.id(), resigned.id(), "the id covers the signature");
+
+    let other = make_delegation(&identity(68), &delegate, AUDIENCE, spend_bounds());
+    assert_ne!(d.id(), other.id(), "another principal's grant is another delegation");
 }

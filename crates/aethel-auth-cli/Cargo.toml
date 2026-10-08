@@ -40,6 +40,11 @@ rand = "0.8"
 # `export_sealed` is a 32-byte key, which is what it expects.
 argon2 = "0.5"
 
+# Wipes the CLI's own secret buffers (entropy, the derived seal key, the
+# passphrase) when they drop. aethel-core zeroizes what it holds; these are
+# the buffers this tool creates itself.
+zeroize = "1"
+
 [dev-dependencies]
 # The tests verify the CLI's output with the real verifier, so they need the
 # checking half of the crate the CLI drives.

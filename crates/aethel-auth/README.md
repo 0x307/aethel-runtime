@@ -26,7 +26,7 @@ They are separate crates for one reason: the vault advertises never being hosted
 
 ## Verifier-first
 
-The default build verifies and holds no secret of any kind. It depends on `aethel-core` alone: no WASM runtime, no wallet, no ECDSA.
+The default build verifies and holds no secret of any kind. Its runtime dependencies are `aethel-core`, `sha3`, `subtle` and, by default, `serde`: no WASM runtime, no wallet, no ECDSA.
 
 ```toml
 [features]
@@ -55,8 +55,8 @@ This crate registers its purposes in `aethel-core`'s central registry rather tha
 `authorise` checks that a delegation is genuine, live, for this relying party, issued to the key that just proved itself, and that the action and amount fall inside its declared bounds. It returns `RemainingObligations` for what only the relying party can check:
 
 - **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`.
-- **Human approval.** Above `approval_required_above`, hold the request until the principal signs a step-up for that action.
-- **Revocation.** Keep the revocations you have verified and refuse a revoked key.
+- **Human approval.** Above `approval_required_above`, hold the request until the **principal** signs a step-up for that action. Verify it with `verify_step_up`, then `check_approval`, which refuses a step-up from the agent itself.
+- **Revocation.** Keep the revocations you have verified, and refuse a delegation whose principal or delegate key is revoked. A principal ends its delegates' authority by revoking its own key at that relying party. `Delegation::id` gives you a stable key for the running total and for this.
 
 A caller that ignores the return value has left a cap unchecked. That is why it is returned rather than checked silently.
 

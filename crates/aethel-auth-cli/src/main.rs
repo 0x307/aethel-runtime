@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use aethel_auth::{revoke_as_authority, Bounds, Holder};
 use clap::{Parser, Subcommand};
 use rand::RngCore;
+use zeroize::Zeroizing;
 
 mod identity_file;
 mod recovery;
@@ -180,9 +181,9 @@ enum Command {
     },
 }
 
-fn read_passphrase(path: &Path) -> Result<Vec<u8>, CliError> {
+fn read_passphrase(path: &Path) -> Result<Zeroizing<Vec<u8>>, CliError> {
     if path.as_os_str() == "-" {
-        let mut buf = Vec::new();
+        let mut buf = Zeroizing::new(Vec::new());
         std::io::stdin()
             .read_to_end(&mut buf)
             .map_err(|e| CliError::Io(e.to_string()))?;
@@ -191,7 +192,7 @@ fn read_passphrase(path: &Path) -> Result<Vec<u8>, CliError> {
         }
         return Ok(buf);
     }
-    let mut buf = std::fs::read(path).map_err(|e| CliError::Io(e.to_string()))?;
+    let mut buf = Zeroizing::new(std::fs::read(path).map_err(|e| CliError::Io(e.to_string()))?);
     while buf.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
         buf.pop();
     }
@@ -260,7 +261,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                      losing this relationship. There is no operator who can restore it.\n"
                 );
             } else {
-                let (shares, root) = recovery::split(&entropy, &audience)?;
+                let (shares, root) = recovery::split(&entropy[..], &audience)?;
                 std::fs::create_dir_all(&shares_dir).map_err(|e| CliError::Io(e.to_string()))?;
                 for share in &shares {
                     let p = shares_dir.join(format!("share-{}.json", share.index));
@@ -346,7 +347,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             if max_total.is_some() != window_secs.is_some() {
                 return Err(CliError::Usage(
-                    "--max-total and --window-secs go together: a total needs the window it                      applies over"
+                    "--max-total and --window-secs go together: a total needs the window it applies over"
                         .into(),
                 ));
             }

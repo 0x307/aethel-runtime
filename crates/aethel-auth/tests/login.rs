@@ -4,7 +4,8 @@
 //! is not worth a test, it should not be in the docs.
 
 use aethel_auth::{
-    purposes, verify_login, AuthError, AuthStrength, InMemoryNonceStore, LoginProof, VerifyParams,
+    purposes, verify_login, AuthError, AuthStrength, InMemoryNonceStore, LoginProof, NonceStore,
+    StoreError, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -234,5 +235,42 @@ fn the_reserved_session_field_is_signed_when_present() {
         human.signing_input(),
         "an absent commitment and a present one must be distinguishable, or a \
          proof could be stripped of its session request in transit"
+    );
+}
+
+/// Records the retention each claim asks for.
+struct RecordingStore(std::sync::Mutex<Vec<u64>>);
+
+impl NonceStore for RecordingStore {
+    fn claim(
+        &self,
+        _nonce: &[u8; 32],
+        expires_at: u64,
+    ) -> impl core::future::Future<Output = Result<bool, StoreError>> + Send {
+        self.0.lock().unwrap().push(expires_at);
+        async { Ok(true) }
+    }
+}
+
+/// A holder that picks a far-future expiry must not make the verifier's
+/// store remember its nonce for that long: the proof stops being accepted
+/// after `max_age_secs`, so that is the most the store needs. A proof with an
+/// ordinary expiry keeps it, which is the control.
+#[test]
+fn nonce_retention_is_bounded_by_the_verifiers_max_age() {
+    let id = identity(70);
+
+    let store = RecordingStore(std::sync::Mutex::new(Vec::new()));
+    let far = make_proof(&id, AUDIENCE, [70u8; 32], NOW, u64::MAX, None);
+    block_on(verify_login(&far, params(), &store)).expect("valid proof");
+
+    let short = make_proof(&id, AUDIENCE, [71u8; 32], NOW, NOW + 30, None);
+    block_on(verify_login(&short, params(), &store)).expect("valid proof");
+
+    let recorded = store.0.lock().unwrap().clone();
+    assert_eq!(
+        recorded,
+        vec![NOW + MAX_AGE + 1, NOW + 30],
+        "retention is the earlier of expiry and the max-age clamp"
     );
 }
