@@ -7,6 +7,9 @@ description = "Delegated authority for post-quantum agent identities: per-reques
 authors = ["Ed Johnson"]
 license = "Apache-2.0"
 repository = "https://github.com/0x307/aethel-runtime"
+homepage = "https://0x307.com/crates"
+documentation = "https://docs.rs/aethel-auth"
+readme = "README.md"
 keywords = ["identity", "post-quantum", "authentication", "delegation", "agent"]
 categories = ["cryptography", "authentication"]
 

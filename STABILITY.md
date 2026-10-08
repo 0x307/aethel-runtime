@@ -115,7 +115,9 @@ There's no team and no on-call rotation behind this project. In practice:
 This policy is shared across every repo in this family, not restated per repo. Each repo's
 `SECURITY.md` and `CHANGELOG.md` reference this document rather than duplicating it.
 
-## 8. Active deprecations (this repo: `aethel-vault`)
+## 8. Active deprecations (this repo)
+
+### `aethel-vault`
 
 Per §3, tracked here until each item's removal ships (and called out again in
 `CHANGELOG.md` at that point):
@@ -123,3 +125,7 @@ Per §3, tracked here until each item's removal ships (and called out again in
 | Item | Deprecated since | Migration | Earliest removal |
 |---|---|---|---|
 | `client::ContractPayload` | 0.2.0 | Type alias for `client::LedgerPayload`, renamed because it is the confidential internal ledger's payload, not an on-chain contract's. Use `LedgerPayload`; the fields are identical. | 0.4.0 |
+
+### `aethel-auth`
+
+None. First published as 0.1.0.
