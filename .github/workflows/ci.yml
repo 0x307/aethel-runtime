@@ -149,6 +149,9 @@ jobs:
       - name: Test (holder)
         run: cargo test --locked -p aethel-auth --features holder
 
+      - name: Test (holder, legacy number arrays)
+        run: cargo test --locked -p aethel-auth --features holder,legacy-number-arrays
+
       - name: Test (verify only, no serde)
         run: cargo test --locked -p aethel-auth --no-default-features --features std,verify
 

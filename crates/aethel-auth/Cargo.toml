@@ -47,6 +47,11 @@ verify = []
 # signature covers the canonical bytes either way.
 serde = ["dep:serde"]
 
+# `legacy-number-arrays` — also accept bytes as JSON arrays of numbers, the
+# shape before base64url. Off by default: nothing needs it, and a verifier
+# should accept one spelling per value.
+legacy-number-arrays = ["serde"]
+
 # `holder` — produce those statements rather than check them.
 #
 # Adds no dependency: signing needs `aethel_core::signing::Identity`, which is

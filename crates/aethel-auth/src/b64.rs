@@ -6,9 +6,16 @@
 //! client already speaks base64url, so the statement types serialise their
 //! bytes that way: roughly a third of the size, and text a person can copy.
 //!
-//! **Decoding accepts both**, base64url text or the old number array, so a
-//! proof written before this change still reads. Only the JSON shape changed;
-//! the signed bytes (`signing_input`) never depended on it.
+//! **Decoding is strict: one spelling per value.** Only canonical base64url is
+//! accepted: no padding, and no set bits after the last byte. A verifier stores
+//! and compares keys, and signatures cover the *decoded* bytes, so a decoder
+//! that accepted several spellings of one key would let a revoked key come back
+//! under another spelling, past any store that compares text. (Found by the
+//! Aethel Verify review, 2026-10-14.) The old number-array shape is behind the
+//! `legacy-number-arrays` feature, off by default; arrays have one spelling per
+//! byte, so they don't reopen the problem, but nothing needs them by default.
+//! Only the JSON shape is affected; the signed bytes (`signing_input`) never
+//! depended on it.
 //!
 //! Hand-rolled rather than a dependency: the default build is what a verifier
 //! hosts, and twenty lines of encoding do not justify growing it.
@@ -34,9 +41,16 @@ fn encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Strict: returns bytes only for the canonical spelling, the one `encode`
+/// produces. Padding, non-zero trailing bits and anything else are refused.
 fn decode(text: &str) -> Option<Vec<u8>> {
+    let out = decode_any(text)?;
+    (encode(&out) == text).then_some(out)
+}
+
+fn decode_any(text: &str) -> Option<Vec<u8>> {
     let value = |c: u8| ALPHABET.iter().position(|&a| a == c).map(|p| p as u32);
-    let text = text.trim_end_matches('=').as_bytes();
+    let text = text.as_bytes();
     if text.len() % 4 == 1 {
         return None;
     }
@@ -60,11 +74,11 @@ impl<'de> Visitor<'de> for BytesVisitor {
     type Value = Vec<u8>;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("base64url text, or an array of byte values")
+        f.write_str("canonical base64url text (no padding, zero trailing bits)")
     }
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
-        decode(v).ok_or_else(|| E::custom("not base64url"))
+        decode(v).ok_or_else(|| E::custom("not canonical base64url"))
     }
 
     fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Vec<u8>, E> {
@@ -72,6 +86,11 @@ impl<'de> Visitor<'de> for BytesVisitor {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<u8>, A::Error> {
+        if !cfg!(feature = "legacy-number-arrays") {
+            return Err(de::Error::custom(
+                "byte arrays are not accepted; use base64url (or enable legacy-number-arrays)",
+            ));
+        }
         let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0));
         while let Some(b) = seq.next_element::<u8>()? {
             out.push(b);
@@ -175,11 +194,56 @@ mod tests {
     fn matches_the_standard_alphabet_without_padding() {
         assert_eq!(encode(b"\xfb\xff"), "-_8");
         assert_eq!(encode(b"hello"), "aGVsbG8");
-        assert_eq!(
-            decode("aGVsbG8=").unwrap(),
-            b"hello",
-            "padding is tolerated on input"
-        );
         assert!(decode("a").is_none() && decode("a*bc").is_none());
+    }
+
+    /// One spelling per value: anything but the canonical form is refused.
+    #[test]
+    fn refuses_every_non_canonical_spelling() {
+        // Control: the canonical spelling reads.
+        assert_eq!(decode("aGVsbG8").unwrap(), b"hello");
+        // Padding.
+        assert!(decode("aGVsbG8=").is_none());
+        assert!(decode("aGVsbG8==").is_none());
+        // Non-zero trailing bits: "aGVsbG8" ends in '8' (index 60); '9' (61)
+        // sets a bit the 5-byte value doesn't use.
+        assert!(
+            decode_any("aGVsbG9").is_some(),
+            "the lenient decoder would accept it"
+        );
+        assert!(decode("aGVsbG9").is_none());
+        // A two-byte tail: "-_8" is canonical, "-_9" sets a trailing bit.
+        assert!(decode("-_8").is_some() && decode("-_9").is_none());
+    }
+
+    /// Every length, every possible trailing-bit pattern: only one decodes.
+    #[test]
+    fn exactly_one_spelling_per_value_at_every_length() {
+        for len in 1..40 {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 53 + 7) as u8).collect();
+            let canonical = encode(&bytes);
+            let last = canonical.as_bytes()[canonical.len() - 1];
+            let idx = ALPHABET.iter().position(|&a| a == last).unwrap();
+            let mut accepted = 0;
+            for (alt, &ch) in ALPHABET.iter().enumerate() {
+                // Same high bits as the canonical last character, any low bits.
+                let unused = match len % 3 {
+                    1 => 4,
+                    2 => 2,
+                    _ => 0,
+                };
+                if alt >> unused != idx >> unused {
+                    continue;
+                }
+                let mut s = canonical.clone();
+                s.pop();
+                s.push(ch as char);
+                if let Some(d) = decode(&s) {
+                    assert_eq!(d, bytes);
+                    accepted += 1;
+                }
+            }
+            assert_eq!(accepted, 1, "length {len}");
+        }
     }
 }
