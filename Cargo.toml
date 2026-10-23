@@ -1,8 +1,8 @@
 [package]
 name = "aethel-vault"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Post-quantum wallet vault for Rust and WASM. Thin `signer` mode (default) authorizes EIP-3009/x402 USDC transfers under a caller-supplied ECDSA-capable `SettlementSigner` and signs the intent with ML-DSA-65; confidential internal balances (`fhe-state` feature) are held and transferred as ciphertext the vault never decrypts. Vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
@@ -110,13 +110,30 @@ zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 # directly must use the same minor version. Resolved from crates.io, so CI and a `cargo publish`
 # build against the same published artifact.
 #
+# The floor is 0.7.5, the release that moves aethel-core to pqc-sig 0.5 with
+# byte-identical outputs. An app that asks for aethel-core "0.7.4" still
+# builds: cargo picks 0.7.5 for both. An app on pqc-sig 0.4 still builds:
+# pqc-sig 0.4 and 0.5 resolve side by side, and no pqc-sig type is in either
+# crate's public API. An exact `=0.7.4` pin stays on aethel-vault 0.3.2.
+#
 # default-features = false: don't pull in aethel-core's std feature; its
 # `plp`/`credential`/`signing`/`wire` modules are no_std + alloc, matching
 # this crate's own no_std-style module bodies.
 [dependencies.aethel-core]
-version = "0.7"
+version = "0.7.5"
 default-features = false
 optional = false
+
+# Version floor only. This crate never uses ctutils directly. aethel-core
+# reaches it through pqc-sig's ML-DSA (ml-dsa, hybrid-array, digest), on every
+# build, and ctutils < 0.4.4 has RUSTSEC-2026-0385 (non-constant-time mask
+# generation and u128 comparisons). Naming it here stops any resolver,
+# including the MSRV-aware fallback, from choosing an affected version. 0.4.4
+# needs Rust 1.87, which sets this crate's rust-version. Same floor as pqc-sig
+# 0.5.1.
+[dependencies.ctutils]
+version = "0.4.4"
+default-features = false
 
 # ── WASM-bindgen (optional) ───────────────────────────────────────────────────
 [dependencies.wasm-bindgen]

@@ -1,6 +1,6 @@
 # aethel-vault — the agent-held wallet
 
-> **Tier:** Preview · **MSRV:** 1.85 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
+> **Tier:** Preview · **MSRV:** 1.87 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
 
 **Crate: `aethel-vault`. Repository: `aethel-runtime`.**
 
@@ -65,8 +65,26 @@ and fails the build if any of them ever appear.
 | Mode | Feature | Default? | What it gives you |
 |---|---|---|---|
 | **Signer** | `signer` | **Yes** | EIP-3009/x402 settlement export, standing spend policy, optional signed receipts. No `tfhe`, no HelixDB. This is the Wave-1 "pay a 402 unattended" path. |
-| **Confidential ledger** | `fhe-state` | No | The homomorphic internal balance state machine (`vault`/`client`). A differentiator for agents storing state on a hostile host — not a Wave-1 gate. |
-| **HelixDB storage** | `helixdb` | No | The gRPC storage adapter for the confidential ledger. Pulls `tokio`/`tonic`/`prost`; runs `prost-build`. |
+| **Confidential ledger** (**experimental**) | `fhe-state` | No | The homomorphic internal balance state machine (`vault`/`client`). A differentiator for agents storing state on a hostile host, not a Wave-1 gate. |
+| **HelixDB storage** (**experimental**) | `helixdb` | No | The gRPC storage adapter for the confidential ledger. Pulls `tokio`/`tonic`/`prost`; runs `prost-build`. |
+
+### Experimental: the FHE ledger and the HelixDB adapter
+
+Only the `signer` mode is tested and supported. The other two modes are
+experimental. Do not hold real value in them.
+
+- **FHE ledger (`fhe-state`).** The core ledger operations have no real
+  tests. Key generation, encrypt and decrypt, deposit, transfer and
+  withdrawal are all `#[ignore]` TODO stubs in `tests/vault_tests.rs`. Nine
+  tests do run under `fhe-state`, and they cover only the
+  identity-authenticated transfer path. CI builds and tests default
+  features, so it runs none of them.
+- **HelixDB adapter (`helixdb`).** The adapter is stubs. Each of its four
+  storage calls returns `HelixError::NotImplemented`. Its three tests in
+  `tests/vault_tests.rs` are `#[ignore]` TODO stubs as well.
+
+`tfhe` is BSD-3-Clause-Clear with Zama's patent terms. It is pulled only by
+`fhe-state`. Commercial use of `tfhe` needs a licence from Zama.
 
 A plain `cargo add aethel-vault` builds `signer` only. Confirm with:
 
@@ -169,7 +187,7 @@ cargo build
 cargo test
 ```
 
-### Confidential-ledger (`fhe-state`) build
+### Confidential-ledger (`fhe-state`) build (experimental)
 ```bash
 cargo build --features fhe-state
 cargo test --features fhe-state
@@ -209,7 +227,10 @@ bytes a caller hands it. Two registration paths use it differently
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for why a caller-submitted
 ownership proof can't yet cross the WASM/`extern "C"` boundary.
 
-## HelixDB Storage (`helixdb` feature)
+## HelixDB Storage (`helixdb` feature, experimental)
+
+The adapter is stubs. See
+[Experimental: the FHE ledger and the HelixDB adapter](#experimental-the-fhe-ledger-and-the-helixdb-adapter).
 
 ```protobuf
 // proto/aethel_helix.proto
@@ -289,5 +310,5 @@ audit and stability standard.
 crate, pinned to the published versions.
 
 **Audit status:** None of these crates has been independently audited, and none holds a CMVP / FIPS 140-3 validation. "FIPS 203/204/205/206" means the algorithms follow those standards, not that the code is certified. Known issues for this crate are in
-[SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Versioning and yanks:
+[SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Version policy:
 [STABILITY.md](https://github.com/0x307/aethel-runtime/blob/main/STABILITY.md).

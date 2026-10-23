@@ -1,0 +1,87 @@
+name: cargo-deny
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a new advisory surfaces without anyone remembering to look. That is the whole
+    # reason this doesn't only run at publish time (P1-06).
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    strategy:
+      # A failure on any one check still runs the rest. Advisories, bans, licenses and
+      # sources are independent questions and one shouldn't hide the others. `fail-fast:
+      # false` is what actually delivers that.
+      #
+      # Do NOT use `continue-on-error: true` here. It does not mean "keep going"; it means
+      # "report this job as GREEN regardless." That buries the advisory signal the
+      # accept-and-document decision deliberately keeps visible. And because `failure()`
+      # would then never fire, it silently disables the issue-filing job below.
+      # (This template shipped with exactly that bug until 2026-08-25; caught when the
+      # `pqc-kem` session applied it and reasoned it through rather than copying blindly.)
+      fail-fast: false
+      matrix:
+        checks:
+          - advisories
+          - bans
+          - licenses
+          - sources
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        id: deny
+        with:
+          command: check ${{ matrix.checks }}
+          arguments: --config deny.toml
+
+  open-issue-on-failure:
+    needs: cargo-deny
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open or update issue for failing weekly advisory scan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "cargo-deny weekly scan failed";
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "security,cargo-deny",
+            });
+            const already = existing.find(i => i.title === title);
+            const body = [
+              `The scheduled weekly \`cargo-deny\` run failed.`,
+              ``,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              ``,
+              `Check the run output for which category (advisories / bans / licenses / sources)`,
+              `failed, and record the decision in this repo's dependency-review notes:`,
+              `resolved, accepted, or blocking.`,
+            ].join("\n");
+            if (already) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: already.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["security", "cargo-deny"],
+              });
+            }

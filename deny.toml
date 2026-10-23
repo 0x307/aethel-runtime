@@ -1,0 +1,83 @@
+# Shared cargo-deny configuration for the Identity Release repos.
+# Applies to pqc-kem, pqc-sig, aethel-core, aethel-sdk, and aethel-vault (this repo).
+# Run with: cargo deny --config <path-to-this-file> check
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = []
+# Deliberately scans the full opt-in surface, not just the default build. Here that means
+# the non-default `fhe-state` (tfhe), `helixdb` (tokio/tonic/prost) and `wasm` features.
+# A crate you can enable is a crate whose advisories you should already know about before
+# you enable it, not after.
+all-features = true
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = [
+    # RUSTSEC-2025-0141, bincode is unmaintained. Not cheap to drop: bincode 1.x is the
+    # encoding of the persisted `VaultState` snapshot, the receipt bytes this crate signs,
+    # and the ciphertext/ServerKey bytes tfhe 0.7 exchanges. Swapping it changes those wire
+    # formats, which is a breaking release, not a patch. tfhe 0.7 also depends on it.
+    # This entry comes out when the wire-format migration ships.
+    "RUSTSEC-2025-0141",
+    # RUSTSEC-2024-0436, paste is unmaintained. It is a proc-macro used at build time
+    # only, and reaches this crate only through tfhe (non-default `fhe-state` feature).
+    # Nothing to drop on our side. This entry comes out when tfhe stops using it.
+    "RUSTSEC-2024-0436",
+    # RUSTSEC-2026-0258, h2 0.3 queues empty DATA frames without limit (low severity,
+    # denial of service). Patched only in h2 0.4.16, and tonic 0.11 needs h2 0.3, so the
+    # fix is a tonic/prost major bump. h2 reaches this crate only through tonic, behind
+    # the non-default, experimental `helixdb` feature. No code path runs it: the HelixDB
+    # adapter never opens a gRPC channel (every call returns `NotImplemented`). This entry
+    # comes out when tonic moves to a release on h2 0.4, or tonic is dropped.
+    "RUSTSEC-2026-0258",
+]
+
+[licenses]
+version = 2
+# Permissive licenses compatible with the initiative's own posture (Apache-2.0 for
+# aethel-vault per charter D1). Anything not on this list fails the check rather than
+# being silently allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+    # tfhe is BSD-3-Clause-Clear with Zama's patent terms. That licence is outside the
+    # family allowlist, so it is allowed for tfhe and Zama's own sub-crates only, not
+    # globally. They sit behind the non-default `fhe-state` feature: a default
+    # `cargo add aethel-vault` never pulls them. Commercial use of tfhe needs a patent
+    # licence from Zama. See https://github.com/zama-ai/tfhe-rs/blob/main/LICENSE.
+    { allow = ["BSD-3-Clause-Clear"], crate = "tfhe" },
+    { allow = ["BSD-3-Clause-Clear"], crate = "tfhe-versionable" },
+    { allow = ["BSD-3-Clause-Clear"], crate = "tfhe-versionable-derive" },
+    { allow = ["BSD-3-Clause-Clear"], crate = "concrete-csprng" },
+    { allow = ["BSD-3-Clause-Clear"], crate = "concrete-fft" },
+    { allow = ["BSD-3-Clause-Clear"], crate = "concrete-ntt" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
