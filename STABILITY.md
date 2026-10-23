@@ -54,6 +54,10 @@ without you changing anything.
 the conservative default this policy exists to give you — the cost of an unnecessary minor
 version bump is much lower than the cost of a silent break.
 
+**Security exception for the MSRV.** A security fix may raise the MSRV in a patch release,
+when the fixed dependency needs a newer Rust and no fixed version builds on the old one.
+The changelog entry names the advisory and says which Rust versions are dropped.
+
 ## 3. Deprecation before removal
 
 Nothing is deleted without a deprecation cycle first:

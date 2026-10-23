@@ -1,6 +1,6 @@
 # aethel-vault — the agent-held wallet
 
-> **Tier:** Preview · **MSRV:** 1.85 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
+> **Tier:** Preview · **MSRV:** 1.87 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
 
 **Crate: `aethel-vault`. Repository: `aethel-runtime`.**
 

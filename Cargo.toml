@@ -2,7 +2,7 @@
 name = "aethel-vault"
 version = "0.3.3"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Post-quantum wallet vault for Rust and WASM. Thin `signer` mode (default) authorizes EIP-3009/x402 USDC transfers under a caller-supplied ECDSA-capable `SettlementSigner` and signs the intent with ML-DSA-65; confidential internal balances (`fhe-state` feature) are held and transferred as ciphertext the vault never decrypts. Vault IDs derive from aethel-core anonymous identities."
 authors = ["K. Harper et al. <aytch4k@aethel.network>"]
 license = "Apache-2.0"
@@ -123,6 +123,17 @@ zeroize = { version = "1.7", features = ["zeroize_derive"], optional = true }
 version = "0.7.5"
 default-features = false
 optional = false
+
+# Version floor only. This crate never uses ctutils directly. aethel-core
+# reaches it through pqc-sig's ML-DSA (ml-dsa, hybrid-array, digest), on every
+# build, and ctutils < 0.4.4 has RUSTSEC-2026-0385 (non-constant-time mask
+# generation and u128 comparisons). Naming it here stops any resolver,
+# including the MSRV-aware fallback, from choosing an affected version. 0.4.4
+# needs Rust 1.87, which sets this crate's rust-version. Same floor as pqc-sig
+# 0.5.1.
+[dependencies.ctutils]
+version = "0.4.4"
+default-features = false
 
 # ── WASM-bindgen (optional) ───────────────────────────────────────────────────
 [dependencies.wasm-bindgen]

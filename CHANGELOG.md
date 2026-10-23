@@ -5,10 +5,29 @@ All notable changes to this crate are documented here. Format loosely follows
 
 ## [0.3.3] - 2026-10-23
 
-No change to the API, the wire formats or behaviour. No version was yanked in this release:
-0.3.1 and 0.3.2 stay published and supported.
+**Security, and an MSRV raise from Rust 1.85 to 1.87.** No change to the API, the wire
+formats or behaviour. No version was yanked in this release: 0.3.1 and 0.3.2 stay published
+and supported.
+
+### Security
+
+- **`ctutils` floor for RUSTSEC-2026-0385.** aethel-core reaches `ctutils` on every build,
+  through pqc-sig's ML-DSA (`ml-dsa`, `hybrid-array`, `digest`). Every `ctutils` before 0.4.4
+  has [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html): its
+  constant-time mask generation and `u128` comparisons could compile to branches on secret
+  values. This crate now names `ctutils = "0.4.4"` as a direct dependency. It is a version
+  floor only, the same one pqc-sig 0.5.1 sets. No resolver, including the MSRV-aware
+  fallback, can now choose an affected version.
 
 ### Changed
+
+- **MSRV is now Rust 1.87** (`rust-version = "1.87"`, was 1.85). `ctutils` 0.4.4 and 0.4.5,
+  the fixed releases, need Rust 1.87. The newest `ctutils` that builds on 1.85 is 0.4.2,
+  which is affected, so 1.85 and 1.86 are no longer supported. An MSRV raise is normally
+  breaking. This one ships in a patch release under the new security exception in
+  [`STABILITY.md`](./STABILITY.md#2-what-counts-as-a-breaking-change).
+  **Migration:** build with Rust 1.87 or later. Nothing else changes. A plain resolve on 1.87
+  works: this crate's graph has no `sha2`, so pqc-sig's `sha2` 0.11.1 note does not apply.
 
 - **The aethel-core floor is now 0.7.5** (was 0.7). aethel-core 0.7.5 moves to pqc-sig 0.5 with
   byte-identical outputs. The vault's own vault-ID derivation and ML-DSA-65 signing tests pass
@@ -30,6 +49,8 @@ No change to the API, the wire formats or behaviour. No version was yanked in th
   bugs. A security bug is fixed forward and reported as a RustSec advisory. More than one line
   may be live. A legacy line gets security patches for 6 months after its successor ships,
   then is marked unsupported and stays downloadable. This replaces the old "Yanks" section.
+  It also adds the security exception for the MSRV: a security fix may raise the MSRV in a
+  patch release, stated in the changelog.
 
 ### Added
 
@@ -53,9 +74,11 @@ resolves these itself.
 
 - aethel-core 0.7.0, which is yanked, moves to 0.7.5, and pqc-sig 0.4.2 moves to 0.5.0.
   SLH-DSA and its hashing crates leave the graph.
-- `ctutils` moves from 0.4.2 to 0.4.5 for RUSTSEC-2026-0385 (non-constant-time mask
-  generation, fixed in 0.4.4). It reaches this crate through pqc-sig's ML-DSA code. A
-  downstream build picks up the fix with `cargo update -p ctutils`.
+- `ctutils` moves from 0.4.2 to 0.4.5 for RUSTSEC-2026-0385. The `ctutils` floor above makes
+  the same move for downstream builds.
+- `tokio` moves from 1.53.1 to 1.54.1 for RUSTSEC-2026-0386 (unsound `AsyncFd` constructors,
+  fixed in 1.53.3). tokio reaches this crate only through the `helixdb` feature and the test
+  suite.
 
 ## [0.3.2] - 2026-09-30
 
