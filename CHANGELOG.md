@@ -3,6 +3,60 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.3] - 2026-10-23
+
+No change to the API, the wire formats or behaviour. No version was yanked in this release:
+0.3.1 and 0.3.2 stay published and supported.
+
+### Changed
+
+- **The aethel-core floor is now 0.7.5** (was 0.7). aethel-core 0.7.5 moves to pqc-sig 0.5 with
+  byte-identical outputs. The vault's own vault-ID derivation and ML-DSA-65 signing tests pass
+  unchanged against it. `default-features = false` and the features this crate uses are as
+  before.
+- **Apps on aethel-core 0.7.4 keep building.** A `"0.7.4"` requirement resolves to 0.7.5
+  alongside this crate. Only an exact `=0.7.4` pin does not, and it keeps building on
+  aethel-vault 0.3.2.
+- **Apps on pqc-sig 0.4 keep building.** Cargo resolves pqc-sig 0.4 and 0.5 side by side. No
+  pqc-sig type is in this crate's public API.
+- **The pqc-sig 0.4 line is supported until 2027-05-31.** It gets security fixes until then and
+  stays downloadable after. Move to 0.5 before that date.
+- **The FHE ledger (`fhe-state`) and the HelixDB adapter (`helixdb`) are marked experimental** in
+  the README and the crate docs. The ledger's core operations have no real tests: they are
+  `#[ignore]` TODO stubs in `tests/vault_tests.rs`. The HelixDB adapter is stubs: every storage
+  call returns `HelixError::NotImplemented`. The stubs stay in place. Only `signer` mode is
+  tested and supported.
+- **`STABILITY.md` has the family version policy.** We never yank, including for security
+  bugs. A security bug is fixed forward and reported as a RustSec advisory. More than one line
+  may be live. A legacy line gets security patches for 6 months after its successor ships,
+  then is marked unsupported and stays downloadable. This replaces the old "Yanks" section.
+
+### Added
+
+- **`deny.toml` and a cargo-deny CI job** (advisories, bans, licenses, sources), matching the
+  other family repos. It scans all features, runs on every PR and push to `main`, and weekly.
+  Recorded exceptions, each with its reason in `deny.toml`:
+  - `bincode` 1.3 (RUSTSEC-2025-0141) and `paste` (RUSTSEC-2024-0436) are unmaintained.
+    bincode is the encoding of this crate's snapshots and signed receipts, so dropping it is a
+    wire-format change for a later minor release. paste reaches the build only through `tfhe`.
+  - `tfhe` and Zama's sub-crates are BSD-3-Clause-Clear with Zama's patent terms. They are
+    allowed as a scoped exception only, behind the non-default `fhe-state` feature. Commercial
+    use of `tfhe` needs Zama's terms.
+  - `h2` 0.3 (RUSTSEC-2026-0258, low-severity denial of service) comes in through `tonic`
+    0.11, behind the experimental `helixdb` feature. The fix needs a tonic major bump. No code
+    path runs h2 today, because the HelixDB adapter never opens a gRPC channel.
+
+### Lockfile
+
+`Cargo.lock` only governs this repository's own builds. A crate that depends on this one
+resolves these itself.
+
+- aethel-core 0.7.0, which is yanked, moves to 0.7.5, and pqc-sig 0.4.2 moves to 0.5.0.
+  SLH-DSA and its hashing crates leave the graph.
+- `ctutils` moves from 0.4.2 to 0.4.5 for RUSTSEC-2026-0385 (non-constant-time mask
+  generation, fixed in 0.4.4). It reaches this crate through pqc-sig's ML-DSA code. A
+  downstream build picks up the fix with `cargo update -p ctutils`.
+
 ## [0.3.2] - 2026-09-30
 
 Documentation only. No change to the API, the wire formats or behaviour.

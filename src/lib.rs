@@ -67,8 +67,11 @@
 //!   `VaultState`/homomorphic transfer state machine, [`client`]'s
 //!   `NativeVaultClient`). Pulls `tfhe`. Optional: a differentiator for
 //!   agents storing state on a hostile host, not a Wave-1 gate.
+//!   **Experimental.** Its core ledger operations have no real tests yet.
 //! - `helixdb` — the [`storage::helixdb`] gRPC adapter. Pulls `tokio`,
 //!   `tonic`, `prost`, and runs `prost-build` in `build.rs`.
+//!   **Experimental.** The adapter is stubs: every storage call returns
+//!   `HelixError::NotImplemented`.
 //! - `std` (default) — standard library support. Does not, by itself,
 //!   pull `tokio`/`tonic`/`prost` (that is `helixdb`'s job) or `tfhe`
 //!   (that is `fhe-state`'s job).
@@ -140,7 +143,7 @@
 //! crate, pinned to the published versions.
 //!
 //! **Audit status:** None of these crates has been independently audited, and none holds a CMVP / FIPS 140-3 validation. "FIPS 203/204/205/206" means the algorithms follow those standards, not that the code is certified. Known issues for this crate are in
-//! [SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Versioning and yanks:
+//! [SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Version policy:
 //! [STABILITY.md](https://github.com/0x307/aethel-runtime/blob/main/STABILITY.md).
 //!
 

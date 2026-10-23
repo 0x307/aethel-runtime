@@ -25,29 +25,29 @@ dependencies = [
 
 [[package]]
 name = "aethel-core"
-version = "0.7.0"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50e0446629a914627589ebbd716705d1ef15c073e766c43696c30d2cc0afbf1f"
+checksum = "b45059c336f9771bd9b5c25b571711951b80b41ad11f0979d65660ebbf7aff14"
 dependencies = [
  "cc",
  "chacha20poly1305",
  "pqc-sig",
  "rand_core 0.6.4",
  "serde",
- "sha3 0.10.9",
+ "sha3",
  "zeroize",
 ]
 
 [[package]]
 name = "aethel-vault"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aethel-core",
  "bincode",
  "prost",
  "prost-build",
  "serde",
- "sha3 0.10.9",
+ "sha3",
  "tfhe",
  "tokio",
  "tonic",
@@ -203,15 +203,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "block-buffer"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
-dependencies = [
- "hybrid-array",
 ]
 
 [[package]]
@@ -404,9 +395,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
 dependencies = [
  "cmov",
 ]
@@ -427,7 +418,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer 0.10.4",
+ "block-buffer",
  "crypto-common 0.1.7",
 ]
 
@@ -437,9 +428,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
- "block-buffer 0.12.1",
  "crypto-common 0.2.2",
- "ctutils",
 ]
 
 [[package]]
@@ -605,15 +594,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hmac"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
-dependencies = [
- "digest 0.11.3",
-]
 
 [[package]]
 name = "http"
@@ -996,20 +976,16 @@ dependencies = [
 
 [[package]]
 name = "pqc-sig"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbd900faa97edce189c74d686c5ba401f992922731d7ad36560752f4e62ca767"
+checksum = "e2e9ac94c70f9020a13eeacf14e2a755706ea09b7ef75857e6a49fca774d3731"
 dependencies = [
  "base64ct",
  "bs58",
- "der",
  "ml-dsa",
- "pkcs8",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
- "slh-dsa",
- "spki",
  "subtle",
  "thiserror",
  "zeroize",
@@ -1283,17 +1259,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha2"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.3.1",
- "digest 0.11.3",
-]
-
-[[package]]
 name = "sha3"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1301,16 +1266,6 @@ checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
 dependencies = [
  "digest 0.10.7",
  "keccak 0.1.6",
-]
-
-[[package]]
-name = "sha3"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
-dependencies = [
- "digest 0.11.3",
- "keccak 0.2.2",
 ]
 
 [[package]]
@@ -1355,25 +1310,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "slh-dsa"
-version = "0.2.0-rc.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "371c02fe34044d8866ddf7cb0e8204a87ef31a39f0408bed41c4253ea9dd61ed"
-dependencies = [
- "const-oid",
- "digest 0.11.3",
- "hmac",
- "hybrid-array",
- "pkcs8",
- "rand_core 0.10.1",
- "sha2",
- "sha3 0.11.0",
- "signature",
- "typenum",
- "zerocopy",
-]
 
 [[package]]
 name = "smallvec"
@@ -1483,7 +1419,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "sha3 0.10.9",
+ "sha3",
  "tfhe-versionable",
 ]
 

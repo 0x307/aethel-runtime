@@ -90,13 +90,20 @@ what makes a 0.x project look abandoned; a shipped no-op doesn't.
 This cadence is a floor, not a promise of frequency above it. Faster is normal, especially
 early. The floor is what's meant to hold indefinitely, including through a slow stretch.
 
-### Yanks
+### Version policy
 
-A version is yanked when it has a security defect, when it fails to build for a consumer,
-or when it produces data the rest of the family no longer accepts. It is never yanked to push
-people onto a newer feature set. A yanked version still resolves from an existing
-`Cargo.lock`, so nothing already built breaks; new resolutions skip it. The release that
-replaces it says why in `CHANGELOG.md`.
+- **We never yank.** Not for a bug, not for a security defect, not to move people to a newer
+  release. A security defect is fixed forward in a new release and reported as a RustSec
+  advisory, so `cargo audit` and `cargo deny` flag the affected versions.
+- **More than one line may be live.** A line is a `0.x` minor series, such as `0.3`. When a
+  dependency forces a breaking release, the old line can stay in use alongside the new one.
+- **A legacy line gets 6 months of security patches.** The window starts on the day its
+  successor line ships. During it, security fixes are released on the legacy line too.
+- **After the window, the line is unsupported.** It is marked unsupported in `CHANGELOG.md`
+  and gets no more fixes. Every version stays downloadable, and existing builds keep working.
+- Each release that opens or closes a support window states the dates in `CHANGELOG.md`.
+
+This policy took effect on 2026-10-22. It does not change versions yanked before then.
 
 ## 6. Support posture
 
