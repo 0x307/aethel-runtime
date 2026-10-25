@@ -12,7 +12,8 @@
 //!
 //! 1. **Authenticate**: prove control of a key. `aethel-core` does this; the
 //!    [`LoginProof`] here makes that proof bound to one relying party, one
-//!    window and one nonce.
+//!    window and one nonce, and optionally to one request
+//!    ([`verify_login_for_request`]).
 //! 2. **Authorise each request**: check that a [`Delegation`] from a
 //!    principal covers what its delegate is attempting.
 //! 3. **Step up**: re-prove for one sensitive action, which is how a
@@ -61,8 +62,9 @@
 //!
 //! # Status
 //!
-//! Built: the login proof, step-up, delegation, and succession and revocation
-//! statements, with builders for all of them behind the `holder` feature.
+//! Built: the login proof (with optional request binding), step-up,
+//! delegation, and succession and revocation statements, with builders for
+//! all of them behind the `holder` feature.
 
 // No unsafe code, tests included. Test executors use `Waker::noop()`.
 #![forbid(unsafe_code)]

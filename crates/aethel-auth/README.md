@@ -8,7 +8,7 @@ Delegated authority for post-quantum agent identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: 0.1.0, not yet on crates.io.** Per-request login proof, bounded delegation, step-up approval, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
+> **Status: 0.1.0, not yet on crates.io.** Per-request login proof (optionally bound to one request), bounded delegation, step-up approval, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
 
 ## What a service hosts, and what an agent holds
 
