@@ -16,6 +16,22 @@
 //! [`AuthenticatedIdentity`] without acting on it. Reserving it now means the
 //! session flow, if it ships, does not change what an agent signs.
 //!
+//! # Binding a proof to one request
+//!
+//! A proof without a request digest says "this key, at this audience, in this
+//! window". Anyone who sees it before the nonce is claimed (a proxy that
+//! terminates TLS, a gateway, a log) can attach it to a different request at
+//! the same audience. [`LoginProof::request_digest`] closes that: the holder
+//! signs a digest of the request, and [`verify_login_for_request`] refuses the
+//! proof unless the relying party's own digest of the request it received
+//! matches. The relying party defines what the digest covers, the way it does
+//! for a step-up's `action_digest`; the README gives a recommended form.
+//!
+//! A proof that carries a digest is refused by plain [`verify_login`], with
+//! [`AuthError::RequestDigestNotChecked`]. The holder asked for the binding,
+//! and a verifier that ignored it would be accepting the proof for any
+//! request.
+//!
 //! # What the client controls, and what that costs
 //!
 //! Because the client picks the nonce and the window, two things follow, and
@@ -118,6 +134,26 @@ pub struct LoginProof {
     /// signed bytes may be logged.
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::opt_array32"))]
     pub session_commitment: Option<[u8; 32]>,
+    /// Optional: a digest of the one request this proof is for.
+    ///
+    /// The crate does not interpret it. The relying party defines what it
+    /// covers (the README recommends method, path and a hash of the body) and
+    /// computes it from the request it actually received, never from a value
+    /// the client sent. Check it with [`verify_login_for_request`]; plain
+    /// [`verify_login`] refuses a proof that carries one.
+    ///
+    /// Signed only when present. A `None` digest adds nothing to
+    /// [`LoginProof::signing_input`] and nothing to the JSON, so a proof made
+    /// before this field existed has the same bytes and still verifies.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "crate::b64::opt_array32"
+        )
+    )]
+    pub request_digest: Option<[u8; 32]>,
     /// ML-DSA-65 signature over [`LoginProof::signing_input`], made under
     /// `AUTH_LOGIN_V1`.
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
@@ -153,6 +189,13 @@ impl LoginProof {
         match &self.session_commitment {
             Some(c) => push_len_prefixed(&mut out, c),
             None => push_len_prefixed(&mut out, &[]),
+        }
+        // Appended only when present, unlike the commitment above, so that a
+        // proof without one keeps the exact bytes it had before the field
+        // existed. Still unambiguous: every earlier field is fixed-size or
+        // length-prefixed, so the total length says whether a digest follows.
+        if let Some(d) = &self.request_digest {
+            push_len_prefixed(&mut out, d);
         }
         out
     }
@@ -274,15 +317,67 @@ pub struct VerifyParams<'a> {
 /// Claiming first would let an unauthenticated party write into the nonce
 /// store at will, which is a denial-of-service surface with no upside: a
 /// replayed proof still fails, just at the claim instead of before it.
+///
+/// # A proof bound to a request is refused here
+///
+/// If the proof carries a [`LoginProof::request_digest`], this returns
+/// [`AuthError::RequestDigestNotChecked`] without checking the signature or
+/// claiming the nonce. Use [`verify_login_for_request`] for those.
 pub async fn verify_login<N: NonceStore>(
     proof: &LoginProof,
     params: VerifyParams<'_>,
+    nonces: &N,
+) -> Result<AuthenticatedIdentity, AuthError> {
+    verify_login_inner(proof, params, None, nonces).await
+}
+
+/// Verify a login proof that is bound to one request, and spend its nonce.
+///
+/// `expected_request_digest` is the relying party's own digest of the request
+/// it received, computed the same way the holder computed it. It must never
+/// be a value the client supplied: comparing the proof's digest with a digest
+/// the client also chose checks nothing.
+///
+/// The proof must carry a digest, and it must match. A proof with no digest
+/// is refused with [`AuthError::RequestMismatch`], the same as a wrong one,
+/// because an unbound proof is exactly what this check exists to rule out.
+/// Otherwise the checks and their order are those of [`verify_login`], with
+/// the digest compared, in constant time, before the signature.
+pub async fn verify_login_for_request<N: NonceStore>(
+    proof: &LoginProof,
+    params: VerifyParams<'_>,
+    expected_request_digest: &[u8; 32],
+    nonces: &N,
+) -> Result<AuthenticatedIdentity, AuthError> {
+    verify_login_inner(proof, params, Some(expected_request_digest), nonces).await
+}
+
+/// One implementation for both entry points, so the bound and unbound checks
+/// cannot drift apart.
+async fn verify_login_inner<N: NonceStore>(
+    proof: &LoginProof,
+    params: VerifyParams<'_>,
+    expected_request_digest: Option<&[u8; 32]>,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
     if proof.public_key.is_empty() || proof.signature.is_empty() {
         return Err(AuthError::Malformed);
     }
     check_envelope(&proof.audience, proof.issued_at, proof.expires_at, &params)?;
+
+    // Free checks, so before the signature. Constant-time for the same reason
+    // as the step-up's action digest: not secret, but on a path an attacker
+    // drives, and there is no reason to leak a prefix match.
+    match (expected_request_digest, &proof.request_digest) {
+        (None, None) => {}
+        (None, Some(_)) => return Err(AuthError::RequestDigestNotChecked),
+        (Some(_), None) => return Err(AuthError::RequestMismatch),
+        (Some(expected), Some(signed)) => {
+            if !bool::from(signed.ct_eq(expected)) {
+                return Err(AuthError::RequestMismatch);
+            }
+        }
+    }
 
     let verified = verify_with_purpose(
         &proof.public_key,

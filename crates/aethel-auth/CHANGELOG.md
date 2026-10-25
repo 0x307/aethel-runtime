@@ -15,6 +15,16 @@ what it may do.
   relying party, one validity window and one nonce, signed under
   `aethel-auth/login/v1`. The verifier clamps the window with its own maximum
   age and claims the nonce atomically through a `NonceStore`.
+- **Request binding for login proofs.** An optional
+  `LoginProof::request_digest`, signed under the same purpose, binds a proof
+  to one request. `Holder::login_for_request` makes one and
+  `verify_login_for_request` checks it against the relying party's own digest
+  of the request, in constant time. Plain `verify_login` refuses a proof that
+  carries a digest (`AuthError::RequestDigestNotChecked`), and
+  `verify_login_for_request` refuses one without (`AuthError::RequestMismatch`).
+  A proof without a digest has the same signed bytes and JSON as before, so
+  proofs made before the field existed still verify. The README recommends a
+  canonical form: method, path and a SHA-256 of the body, length-prefixed.
 - **`Delegation`, `Bounds`, `verify_delegation` and `authorise`.** A principal
   grants a delegate a list of actions, a ceiling per invocation, a total over a
   window, an approval threshold and a validity period, at one relying party.
@@ -45,7 +55,7 @@ what it may do.
 
 ### Not in this release
 
-- **Sessions, request binding, enrolment and the directory**, the flow for a
+- **Sessions, session request binding, enrolment and the directory**, the flow for a
   person at a browser that cannot sign. `LoginProof::session_commitment` is
   reserved for it and is always `None` from this release's holder, so adding
   that flow later does not change what an agent signs.

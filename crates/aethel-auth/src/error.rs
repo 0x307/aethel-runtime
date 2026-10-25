@@ -39,6 +39,13 @@ pub enum AuthError {
     /// A step-up was signed for a different action than the one being
     /// attempted, or the action was swapped after the holder consented.
     ActionMismatch,
+    /// A login proof checked with `verify_login_for_request` had no request
+    /// digest, or a digest of a different request.
+    RequestMismatch,
+    /// A login proof carried a request digest but was checked with plain
+    /// `verify_login`, which cannot check it. Refused rather than accepted,
+    /// because the holder asked for the proof to be good for one request only.
+    RequestDigestNotChecked,
     /// A delegation did not authorise what the delegate attempted: wrong
     /// action, over a bound, outside its window, or not for this audience.
     NotDelegated,
@@ -83,6 +90,15 @@ impl fmt::Display for AuthError {
             }
             AuthError::NonceAlreadyUsed => write!(f, "nonce has already been claimed"),
             AuthError::ActionMismatch => write!(f, "step-up was signed for a different action"),
+            AuthError::RequestMismatch => {
+                write!(f, "login proof is not bound to this request")
+            }
+            AuthError::RequestDigestNotChecked => {
+                write!(
+                    f,
+                    "login proof is bound to a request, and was not checked as one"
+                )
+            }
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
             AuthError::NotAuthorised => write!(f, "signer is not entitled to make this statement"),
             AuthError::Malformed => write!(f, "input could not be parsed"),
@@ -127,6 +143,8 @@ mod tests {
             AuthError::BadSignature,
             AuthError::NonceAlreadyUsed,
             AuthError::ActionMismatch,
+            AuthError::RequestMismatch,
+            AuthError::RequestDigestNotChecked,
             AuthError::NotDelegated,
             AuthError::NotAuthorised,
             AuthError::Malformed,

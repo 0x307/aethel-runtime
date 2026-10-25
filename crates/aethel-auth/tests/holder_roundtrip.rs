@@ -7,9 +7,9 @@
 //! to agree about the canonical bytes or nothing passes.
 
 use aethel_auth::{
-    authorise, revoke_as_authority, verify_delegation, verify_login, verify_revocation,
-    verify_step_up, verify_succession, AuthStrength, Bounds, Holder, InMemoryNonceStore,
-    VerifyParams,
+    authorise, revoke_as_authority, verify_delegation, verify_login, verify_login_for_request,
+    verify_revocation, verify_step_up, verify_succession, AuthStrength, Bounds, Holder,
+    InMemoryNonceStore, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -58,6 +58,28 @@ fn an_agent_logs_in() {
     assert_eq!(out.public_key, holder.public_key());
     assert_eq!(out.strength, AuthStrength::Proven);
     assert!(out.session_commitment.is_none());
+}
+
+#[test]
+fn an_agent_logs_in_for_one_request() {
+    let id = identity(111);
+    let holder = Holder::new(&id, CONSOLE);
+    let nonces = InMemoryNonceStore::new();
+    let request = [0xD1; 32];
+
+    let proof = holder.login_for_request([2u8; 32], NOW, 60, request);
+    assert_eq!(proof.request_digest, Some(request));
+    let out = block_on(verify_login_for_request(
+        &proof,
+        params(CONSOLE),
+        &request,
+        &nonces,
+    ))
+    .expect("round trip");
+    assert_eq!(out.public_key, holder.public_key());
+
+    // Plain `login` still makes an unbound proof.
+    assert_eq!(holder.login([3u8; 32], NOW, 60).request_digest, None);
 }
 
 #[test]

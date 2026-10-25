@@ -61,6 +61,31 @@ This crate registers its purposes in `aethel-core`'s central registry rather tha
 
 A caller that ignores the return value has left a cap unchecked. That is why it is returned rather than checked silently.
 
+## Binding a login proof to one request
+
+A plain login proof is bound to one relying party, one window and one nonce, but not to a request. Anyone who sees it before the relying party claims its nonce (a proxy that terminates TLS, a gateway, a log) can attach it to a different request at the same audience.
+
+To close that, the holder signs a digest of the request with `Holder::login_for_request`, and the relying party checks it with `verify_login_for_request(proof, params, &expected_digest, nonces)`. The digest is an optional field, `LoginProof::request_digest`, signed under the same `aethel-auth/login/v1` purpose. This is composition over the existing login proof, not a new construction.
+
+- **The relying party computes the expected digest** from the request it actually received. Never take it from the client: comparing the proof's digest with a digest the client also chose checks nothing.
+- **A proof without a digest is refused** by `verify_login_for_request`, because an unbound proof is good for any request.
+- **A proof with a digest is refused** by plain `verify_login`, with `AuthError::RequestDigestNotChecked`. The holder asked for the binding, and a verifier must not drop it silently.
+- **The digest is compared in constant time**, before the signature is checked and before the nonce is claimed.
+
+The crate does not interpret the digest. The relying party defines what it covers, the way it does for a step-up's `action_digest`. The recommended form, with `lp(x)` meaning the 4-byte big-endian length of `x` followed by `x`:
+
+```text
+request_digest = SHA-256( lp(method) || lp(path) || lp(SHA-256(body)) )
+
+method  the HTTP method in upper case, such as "POST"
+path    the path and query exactly as sent, such as "/v1/pay?invoice=7"
+body    the body bytes exactly as sent; an empty body hashes as SHA-256("")
+```
+
+The host is not in it because the audience is already signed. Headers are not in it; a relying party that relies on a header adds it as a further `lp(..)` field, and the holder must do the same. Compute the digest where the request arrives in the form the holder sent it, before any proxy rewrites the path. SHA-256 is recommended because browsers and HTTP stacks have it built in. The signature covers the 32 bytes either way.
+
+A proof without a digest has the same signed bytes and the same JSON as before the field existed, so every existing proof still verifies. A verifier older than the field refuses a proof that carries one: it checks the signature over bytes without the digest, so it fails closed.
+
 ## Wire format: one spelling per value
 
 With `serde`, byte fields are base64url text, and decoding is strict. Only the canonical form is accepted: no padding, and no set bits after the last byte. A relying party stores and compares keys, and signatures cover the decoded bytes. A decoder that accepted several spellings of one key would let a revoked key come back under another spelling. The older JSON number-array shape is behind `legacy-number-arrays`, off by default.

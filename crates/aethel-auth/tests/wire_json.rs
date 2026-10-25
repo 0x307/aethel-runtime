@@ -99,7 +99,25 @@ fn absent_options_and_wrong_lengths_behave() {
     let agent = Holder::new(&id, AUDIENCE).login([7u8; 32], 1_700_000_000, 60);
     let json = serde_json::to_string(&agent).unwrap();
     assert!(json.contains("\"session_commitment\":null"));
+    assert!(
+        !json.contains("request_digest"),
+        "an absent request digest is left out, so the JSON is what it was before the field"
+    );
     assert_eq!(serde_json::from_str::<LoginProof>(&json).unwrap(), agent);
+
+    let bound = Holder::new(&id, AUDIENCE).login_for_request([8u8; 32], 1_700_000_000, 60, [9; 32]);
+    let bound_json = serde_json::to_string(&bound).unwrap();
+    assert!(bound_json.contains("\"request_digest\":\"CQkJ"));
+    assert_eq!(
+        serde_json::from_str::<LoginProof>(&bound_json).unwrap(),
+        bound
+    );
+    let mut short = serde_json::to_value(&bound).unwrap();
+    short["request_digest"] = serde_json::json!("AAAA");
+    assert!(
+        serde_json::from_value::<LoginProof>(short).is_err(),
+        "a request digest must be 32 bytes"
+    );
 
     let short_nonce = json.replace(
         &format!(

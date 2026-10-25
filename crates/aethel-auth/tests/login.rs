@@ -4,8 +4,8 @@
 //! is not worth a test, it should not be in the docs.
 
 use aethel_auth::{
-    purposes, verify_login, AuthError, AuthStrength, InMemoryNonceStore, LoginProof, NonceStore,
-    StoreError, VerifyParams,
+    purposes, verify_login, verify_login_for_request, AuthError, AuthStrength, InMemoryNonceStore,
+    LoginProof, NonceStore, StoreError, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -47,6 +47,7 @@ fn make_proof(
         issued_at,
         expires_at,
         session_commitment: commitment,
+        request_digest: None,
         signature: Vec::new(),
     };
     proof.signature = identity
@@ -289,5 +290,192 @@ fn nonce_retention_is_bounded_by_the_verifiers_max_age() {
         recorded,
         vec![NOW + MAX_AGE + 1, NOW + 30],
         "retention is the earlier of expiry and the max-age clamp"
+    );
+}
+
+// ── Binding a proof to one request ───────────────────────────────────────────
+
+/// What a relying party would compute from the request it received. Any 32
+/// bytes do for these tests; the README gives the recommended form.
+const THIS_REQUEST: [u8; 32] = [0xa1; 32];
+const OTHER_REQUEST: [u8; 32] = [0xb2; 32];
+
+/// Build a signed proof bound to `digest`.
+fn make_bound_proof(identity: &Identity, nonce: [u8; 32], digest: [u8; 32]) -> LoginProof {
+    let mut proof = make_proof(identity, AUDIENCE, nonce, NOW - 5, NOW + 60, None);
+    proof.request_digest = Some(digest);
+    proof.signature = identity
+        .sign_with_purpose(purposes::AUTH_LOGIN_V1, &proof.signing_input())
+        .expect("signing");
+    proof
+}
+
+#[test]
+fn a_proof_bound_to_this_request_is_accepted() {
+    let id = identity(80);
+    let nonces = InMemoryNonceStore::new();
+    let proof = make_bound_proof(&id, [80u8; 32], THIS_REQUEST);
+
+    let out = block_on(verify_login_for_request(
+        &proof,
+        params(),
+        &THIS_REQUEST,
+        &nonces,
+    ))
+    .expect("a matching digest is accepted");
+
+    assert_eq!(out.public_key, id.public_key());
+    assert_eq!(nonces.len(), 1, "the nonce is spent");
+    assert_eq!(
+        block_on(verify_login_for_request(
+            &proof,
+            params(),
+            &THIS_REQUEST,
+            &nonces
+        ))
+        .unwrap_err(),
+        AuthError::NonceAlreadyUsed,
+        "a bound proof is still single-use"
+    );
+}
+
+/// The attack D1 closes: a proof seen on the way is attached to a different
+/// request at the same audience.
+#[test]
+fn a_proof_bound_to_another_request_is_refused() {
+    let id = identity(81);
+    let proof = make_bound_proof(&id, [81u8; 32], THIS_REQUEST);
+
+    let nonces = InMemoryNonceStore::new();
+    assert_eq!(
+        block_on(verify_login_for_request(
+            &proof,
+            params(),
+            &OTHER_REQUEST,
+            &nonces
+        ))
+        .unwrap_err(),
+        AuthError::RequestMismatch
+    );
+    assert!(
+        nonces.is_empty(),
+        "a refused proof must not spend its nonce"
+    );
+
+    // Control: the same proof, at the request it was made for.
+    block_on(verify_login_for_request(
+        &proof,
+        params(),
+        &THIS_REQUEST,
+        &nonces,
+    ))
+    .expect("control: the matching request is accepted");
+}
+
+#[test]
+fn an_unbound_proof_is_refused_where_binding_is_required() {
+    let id = identity(82);
+    let proof = make_proof(&id, AUDIENCE, [82u8; 32], NOW - 5, NOW + 60, None);
+
+    let nonces = InMemoryNonceStore::new();
+    assert_eq!(
+        block_on(verify_login_for_request(
+            &proof,
+            params(),
+            &THIS_REQUEST,
+            &nonces
+        ))
+        .unwrap_err(),
+        AuthError::RequestMismatch,
+        "an unbound proof is good for any request, which is what this check rules out"
+    );
+    assert!(nonces.is_empty());
+
+    // Control: the same proof is a valid unbound login.
+    block_on(verify_login(&proof, params(), &nonces)).expect("control: valid unbound proof");
+}
+
+/// A holder that asked for binding must not have it silently dropped by a
+/// verifier that does not check it.
+#[test]
+fn plain_verify_login_refuses_a_bound_proof() {
+    let id = identity(83);
+    let proof = make_bound_proof(&id, [83u8; 32], THIS_REQUEST);
+
+    let nonces = InMemoryNonceStore::new();
+    assert_eq!(
+        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        AuthError::RequestDigestNotChecked
+    );
+    assert!(nonces.is_empty());
+
+    // Control: the same proof, checked as a bound proof.
+    block_on(verify_login_for_request(
+        &proof,
+        params(),
+        &THIS_REQUEST,
+        &nonces,
+    ))
+    .expect("control: valid bound proof");
+}
+
+/// The digest is signed. Swapping it for the digest of another request, or
+/// stripping it so plain `verify_login` would take the proof, breaks the
+/// signature.
+#[test]
+fn tampering_with_the_request_digest_breaks_the_signature() {
+    let id = identity(84);
+    let proof = make_bound_proof(&id, [84u8; 32], THIS_REQUEST);
+
+    let mut swapped = proof.clone();
+    swapped.request_digest = Some(OTHER_REQUEST);
+    assert_eq!(
+        block_on(verify_login_for_request(
+            &swapped,
+            params(),
+            &OTHER_REQUEST,
+            &InMemoryNonceStore::new()
+        ))
+        .unwrap_err(),
+        AuthError::BadSignature,
+        "a swapped digest must not verify"
+    );
+
+    let mut stripped = proof.clone();
+    stripped.request_digest = None;
+    assert_eq!(
+        block_on(verify_login(
+            &stripped,
+            params(),
+            &InMemoryNonceStore::new()
+        ))
+        .unwrap_err(),
+        AuthError::BadSignature,
+        "a stripped digest must not turn a bound proof into an unbound one"
+    );
+
+    // Control: the untampered proof verifies.
+    block_on(verify_login_for_request(
+        &proof,
+        params(),
+        &THIS_REQUEST,
+        &InMemoryNonceStore::new(),
+    ))
+    .expect("control: untampered bound proof");
+}
+
+#[test]
+fn a_request_digest_changes_the_signed_bytes_only_when_present() {
+    let id = identity(85);
+    let unbound = make_proof(&id, AUDIENCE, [85u8; 32], NOW - 5, NOW + 60, None);
+    let bound = make_bound_proof(&id, [85u8; 32], THIS_REQUEST);
+
+    let mut expected = unbound.signing_input();
+    expected.extend_from_slice(&32u32.to_be_bytes());
+    expected.extend_from_slice(&THIS_REQUEST);
+    assert_eq!(
+        bound.signing_input(),
+        expected,
+        "a present digest is appended, length-prefixed, after every other field"
     );
 }

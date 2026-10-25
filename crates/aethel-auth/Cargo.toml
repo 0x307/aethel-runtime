@@ -121,3 +121,8 @@ required-features = ["holder"]
 name = "wire_json"
 path = "tests/wire_json.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "compat_f43ef88"
+path = "tests/compat_f43ef88.rs"
+required-features = ["serde"]

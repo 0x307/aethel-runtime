@@ -90,8 +90,29 @@ impl<'a> Holder<'a> {
             issued_at,
             expires_at: issued_at.saturating_add(valid_for_secs),
             session_commitment: None,
+            request_digest: None,
             signature: Vec::new(),
         };
+        proof.signature = self.sign(AUTH_LOGIN_V1, &proof.signing_input());
+        proof
+    }
+
+    /// A login proof that is good for one request only.
+    ///
+    /// `request_digest` is a digest of the request, in the form the relying
+    /// party defines (the README recommends one). The relying party computes
+    /// the same digest from the request it receives and checks the proof with
+    /// [`verify_login_for_request`](crate::verify_login_for_request), so a
+    /// proof seen on the way cannot be attached to a different request.
+    pub fn login_for_request(
+        &self,
+        nonce: [u8; 32],
+        issued_at: u64,
+        valid_for_secs: u64,
+        request_digest: [u8; 32],
+    ) -> LoginProof {
+        let mut proof = self.login(nonce, issued_at, valid_for_secs);
+        proof.request_digest = Some(request_digest);
         proof.signature = self.sign(AUTH_LOGIN_V1, &proof.signing_input());
         proof
     }
