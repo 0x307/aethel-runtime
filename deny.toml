@@ -72,6 +72,10 @@ exceptions = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# aethel-auth-cli is publish = false and reaches aethel-auth by path. Path
+# dependencies of unpublished crates are allowed; every published crate keeps
+# the wildcard ban.
+allow-wildcard-paths = true
 deny = []
 skip = []
 skip-tree = []
