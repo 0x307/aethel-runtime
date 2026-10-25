@@ -29,6 +29,7 @@ version = "0.1.0"
 dependencies = [
  "aethel-core",
  "criterion",
+ "ctutils",
  "serde",
  "serde_json",
  "sha3",

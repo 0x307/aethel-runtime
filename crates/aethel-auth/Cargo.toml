@@ -2,7 +2,7 @@
 name = "aethel-auth"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Delegated authority for post-quantum agent identities: per-request login proofs, bounded delegation, step-up approval, and succession and revocation statements over aethel-core's ML-DSA-65 identities. Verifier-first: the default build is verification only, with no WASM runtime, wallet or classical asymmetric crypto."
 authors = ["Ed Johnson"]
 license = "Apache-2.0"
@@ -65,7 +65,22 @@ holder = []
 # machinery out: this crate needs the signing and verification surface,
 # nothing else. 0.7.2 is the first release that registers this crate's
 # purposes; an older 0.7 resolves and then fails to compile.
-aethel-core = { version = "0.7.2", default-features = false, features = ["std"] }
+#
+# The floor is 0.7.5, the release that moves aethel-core to pqc-sig 0.5 with
+# byte-identical outputs. An app that asks for aethel-core "0.7.4" still
+# builds: cargo picks 0.7.5 for both. An app on pqc-sig 0.4 still builds:
+# pqc-sig 0.4 and 0.5 resolve side by side, and no pqc-sig type is in either
+# crate's public API.
+aethel-core = { version = "0.7.5", default-features = false, features = ["std"] }
+
+# Version floor only. This crate never uses ctutils directly. aethel-core
+# reaches it through pqc-sig's ML-DSA (ml-dsa, hybrid-array, digest), on every
+# build, and ctutils < 0.4.4 has RUSTSEC-2026-0385 (non-constant-time mask
+# generation and u128 comparisons). Naming it here stops any resolver,
+# including the MSRV-aware fallback, from choosing an affected version. 0.4.4
+# needs Rust 1.87, which sets this crate's rust-version. Same floor as pqc-sig
+# 0.5.1 and aethel-vault 0.3.3.
+ctutils = { version = "0.4.4", default-features = false }
 
 # SHAKE-256, for key fingerprints. The same hash and the same version
 # aethel-core itself uses, so this adds no new algorithm to the trust surface.

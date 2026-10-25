@@ -2,7 +2,7 @@
 name = "aethel-auth-cli"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Terminal signer for aethel-auth. Holds an identity, produces login proofs, step-ups, delegations and revocation and succession statements, and arranges HTSS social recovery."
 authors = ["Ed Johnson"]
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ publish = false
 aethel-auth = { path = "../aethel-auth", features = ["holder", "serde"] }
 
 # Identity generation, sealing, and HTSS.
-aethel-core = { version = "0.7.2", default-features = false, features = ["std"] }
+aethel-core = { version = "0.7.5", default-features = false, features = ["std"] }
 
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
