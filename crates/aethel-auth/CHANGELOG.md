@@ -46,7 +46,9 @@ what it may do.
   shape is behind `legacy-number-arrays`, off by default.
 - **`Delegation::id()`**, a 32-byte identifier for a relying party's own
   bookkeeping: the running total, and refusing a delegation once a key is
-  revoked.
+  revoked. One id per distinct signed statement. Signing is deterministic, so
+  identical terms from one principal give the same id and share one running
+  total; a separate budget needs a changed term, such as `not_before`.
 - **`check_approval`**, which refuses a step-up unless the delegation's
   principal signed it.
 - **`aethel-auth-cli`** (not published): `new`, `show`, `login`, `step-up`,

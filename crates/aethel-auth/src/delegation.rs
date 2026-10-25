@@ -168,10 +168,27 @@ impl Delegation {
     /// delegation once either of its keys is revoked.
     ///
     /// `SHAKE-256` over a domain label, the principal key, the signed bytes and
-    /// the signature, each length-prefixed. Two delegations with identical
-    /// terms signed separately get different identifiers, because ML-DSA
-    /// signatures are randomised. That is deliberate: each grant is its own
-    /// budget.
+    /// the signature, each length-prefixed. So it is one id per distinct
+    /// signed statement.
+    ///
+    /// # What it is stable over, and what changes it
+    ///
+    /// The id depends on the principal key, every signed field (delegate key,
+    /// audience, every bound, `not_before`, `expires_at`) and the signature
+    /// bytes. It does not depend on the JSON spelling, and it does not change
+    /// when the same delegation is read, stored or sent again.
+    ///
+    /// Signing is deterministic: `aethel-core` signs ML-DSA-65 without
+    /// randomness, and so does `Holder::delegate_to`. So the
+    /// same principal signing **identical terms twice gets the same signature
+    /// and the same id**, and the two grants share one running total. That
+    /// fails safe: it gives less budget, never more. A principal who wants a
+    /// separate budget must change a signed term, for example `not_before`.
+    ///
+    /// A delegation signed elsewhere with a randomised ML-DSA signer has a
+    /// different signature for the same terms, and so a different id. Do not
+    /// rely on equal terms meaning an equal id unless you know how it was
+    /// signed.
     ///
     /// Not a cross-relying-party identifier: a delegation is valid at one
     /// audience, and so is its id. Do not publish it anywhere that audience

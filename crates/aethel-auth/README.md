@@ -57,7 +57,7 @@ This crate registers its purposes in `aethel-core`'s central registry rather tha
 
 - **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`.
 - **Human approval.** Above `approval_required_above`, hold the request until the **principal** signs a step-up for that action. Verify it with `verify_step_up`, then `check_approval`, which refuses a step-up from the agent itself.
-- **Revocation.** Keep the revocations you have verified, and refuse a delegation whose principal or delegate key is revoked. A principal ends its delegates' authority by revoking its own key at that relying party. `Delegation::id` gives you a stable key for the running total and for this.
+- **Revocation.** Keep the revocations you have verified, and refuse a delegation whose principal or delegate key is revoked. A principal ends its delegates' authority by revoking its own key at that relying party. `Delegation::id` gives you a stable key for the running total and for this. It is one id per distinct signed statement. Signing is deterministic, so a principal that signs identical terms twice gets the same id and one shared total; to give a separate budget, change a term such as `not_before`.
 
 A caller that ignores the return value has left a cap unchecked. That is why it is returned rather than checked silently.
 

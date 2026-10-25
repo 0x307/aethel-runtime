@@ -130,6 +130,41 @@ fn a_principal_delegates_to_an_agent() {
     );
 }
 
+/// Pins the `Delegation::id` doc: signing is deterministic, so identical
+/// terms give the same id and share one running total. Control: changing one
+/// signed term gives a separate id.
+#[test]
+fn identical_terms_give_the_same_delegation_id() {
+    let principal_id = identity(116);
+    let agent_id = identity(117);
+    let principal = Holder::new(&principal_id, CONSOLE);
+    let grant = |not_before| {
+        principal.delegate_to(
+            agent_id.public_key(),
+            Bounds {
+                actions: vec![b"transfer".to_vec()],
+                max_total: Some(1_000),
+                window_secs: Some(86_400),
+                ..Bounds::default()
+            },
+            not_before,
+            NOW + 3600,
+        )
+    };
+
+    let first = grant(NOW - 10);
+    let again = grant(NOW - 10);
+    assert_eq!(first.signature, again.signature, "signing is deterministic");
+    assert_eq!(first.id(), again.id(), "identical terms, one id");
+
+    let separate = grant(NOW - 11);
+    assert_ne!(
+        first.id(),
+        separate.id(),
+        "a changed term is a separate budget"
+    );
+}
+
 #[test]
 fn a_holder_revokes_itself_and_an_authority_revokes_another() {
     let holder_id = identity(116);
