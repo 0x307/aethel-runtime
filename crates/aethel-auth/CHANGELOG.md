@@ -30,6 +30,15 @@ what it may do.
   for one audience, and `revoke_as_authority`.
 - **JSON via the `serde` feature (default).** Byte fields are base64url text.
   The signature covers the length-prefixed canonical bytes, not the JSON.
+- **Strict decoding: one spelling per value.** Base64url is read only in its
+  canonical form, with no padding and no set trailing bits. A second spelling
+  of a revoked key is refused at parse time. The older JSON number-array
+  shape is behind `legacy-number-arrays`, off by default.
+- **`Delegation::id()`**, a 32-byte identifier for a relying party's own
+  bookkeeping: the running total, and refusing a delegation once a key is
+  revoked.
+- **`check_approval`**, which refuses a step-up unless the delegation's
+  principal signed it.
 - **`aethel-auth-cli`** (not published): `new`, `show`, `login`, `step-up`,
   `delegate` (with `--max-total` and `--window-secs`), `revoke`, `succeed` and
   `recover`.
@@ -44,4 +53,18 @@ what it may do.
 
 ### Requires
 
-- `aethel-core` 0.7.2 or later, the first release that registers this crate's purposes.
+- `aethel-core` 0.7.5 or later. 0.7.2 is the first release that registers
+  this crate's purposes. 0.7.5 moves aethel-core to pqc-sig 0.5 with
+  byte-identical outputs, so an app that asks for 0.7.4 still builds.
+- Rust 1.87 (MSRV). `ctutils` below 0.4.4 has RUSTSEC-2026-0385, a
+  constant-time failure reached through pqc-sig's ML-DSA. Every fixed
+  `ctutils` needs Rust 1.87. This crate names `ctutils >= 0.4.4` as a direct
+  floor, as pqc-sig 0.5.1 and aethel-vault 0.3.3 do.
+
+### Version policy
+
+This crate never yanks. A security defect is fixed forward and reported as a
+RustSec advisory. A legacy line gets 6 months of security patches from the
+day its successor line ships. A security fix may raise the MSRV in a patch
+release, and the changelog says so. See the README and the family's
+STABILITY.md. Nothing was yanked; this is the first release.

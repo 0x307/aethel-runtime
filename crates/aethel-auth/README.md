@@ -1,6 +1,6 @@
 # aethel-auth: delegated authority for agents
 
-> **Tier:** Preview · **MSRV:** 1.85 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
+> **Tier:** Preview · **MSRV:** 1.87 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
 
 **Crate: `aethel-auth`. Repository: `aethel-runtime`.**
 
@@ -26,13 +26,14 @@ They are separate crates for one reason: the vault advertises never being hosted
 
 ## Verifier-first
 
-The default build verifies and holds no secret of any kind. Its runtime dependencies are `aethel-core`, `sha3`, `subtle` and, by default, `serde`: no WASM runtime, no wallet, no ECDSA.
+The default build verifies and holds no secret of any kind. Its runtime dependencies are `aethel-core`, `sha3`, `subtle` and, by default, `serde`: no WASM runtime, no wallet, no ECDSA. `ctutils` is also named, as a version floor only (see [Version policy](#version-policy)).
 
 ```toml
 [features]
 default = ["std", "verify", "serde"]
 verify  = []   # check statements. Public material only
 serde   = []   # move statements as JSON; the signature covers canonical bytes either way
+legacy-number-arrays = ["serde"]   # also read bytes as JSON number arrays. Off: one spelling per value
 holder  = []   # produce statements. Adds no dependency; it is a guardrail
 ```
 
@@ -60,6 +61,23 @@ This crate registers its purposes in `aethel-core`'s central registry rather tha
 
 A caller that ignores the return value has left a cap unchecked. That is why it is returned rather than checked silently.
 
+## Wire format: one spelling per value
+
+With `serde`, byte fields are base64url text, and decoding is strict. Only the canonical form is accepted: no padding, and no set bits after the last byte. A relying party stores and compares keys, and signatures cover the decoded bytes. A decoder that accepted several spellings of one key would let a revoked key come back under another spelling. The older JSON number-array shape is behind `legacy-number-arrays`, off by default.
+
+## Version policy
+
+- **We never yank.** A security defect is fixed forward in a new release and reported as a RustSec advisory, so `cargo audit` and `cargo deny` flag the affected versions.
+- **More than one line may be live.** A line is a `0.x` minor series, such as `0.1`.
+- **A legacy line gets 6 months of security patches**, starting the day its successor line ships.
+- **After the window, the line is unsupported.** It gets no more fixes. Every version stays downloadable.
+
+**Security exception for the MSRV.** A security fix may raise the MSRV in a patch release, when the fixed dependency needs a newer Rust and no fixed version builds on the old one. The changelog entry names the advisory and says which Rust versions are dropped.
+
+The MSRV is 1.87. `ctutils` below 0.4.4 has RUSTSEC-2026-0385, and `aethel-core` reaches it through `pqc-sig`'s ML-DSA on every build. Every fixed `ctutils` needs Rust 1.87, so this crate names a `ctutils >= 0.4.4` floor and declares 1.87.
+
+The full policy is the family's [STABILITY.md](https://github.com/0x307/aethel-runtime/blob/main/STABILITY.md).
+
 ---
 
 ## The 0x307 crate family
@@ -83,5 +101,5 @@ audit and stability standard.
 crate, pinned to the published versions.
 
 **Audit status:** None of these crates has been independently audited, and none holds a CMVP / FIPS 140-3 validation. "FIPS 203/204/205/206" means the algorithms follow those standards, not that the code is certified. Known issues for this crate are in
-[SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Versioning and yanks:
+[SECURITY.md](https://github.com/0x307/aethel-runtime/blob/main/SECURITY.md). Version policy:
 [STABILITY.md](https://github.com/0x307/aethel-runtime/blob/main/STABILITY.md).
