@@ -26,7 +26,7 @@ crate-type = ["rlib"]
 # holder's side of the protocol and is opt-in, because a server should never
 # link the machinery for it by accident.
 [features]
-default = ["std", "verify", "serde"]
+default = ["std", "serde"]
 
 # `std` — required in this release. Building without it is a compile error
 # with the reason: aethel-core 0.7 also builds as a `cdylib`, which cannot
@@ -35,9 +35,11 @@ default = ["std", "verify", "serde"]
 # keeps working.
 std = []
 
-# `verify` — check a login proof, a step-up, a delegation, a succession or a
-# revocation statement. Public material only. This is the surface a service
-# hosts, and it must never grow a dependency that implies holding a secret.
+# `verify` — enables nothing. Kept so a manifest that names it still
+# resolves. Verification is always built: it needs only public material and
+# no dependency beyond the ones above, so there is nothing to gate, and a
+# build without it would be a relying party that cannot verify. Committing to
+# that now means gating it later can never break a build.
 verify = []
 
 # `serde` — derive Serialize/Deserialize on every statement type.

@@ -30,12 +30,15 @@ The default build verifies and holds no secret of any kind. Its runtime dependen
 
 ```toml
 [features]
-default = ["std", "verify", "serde"]
-verify  = []   # check statements. Public material only
+default = ["std", "serde"]
+std     = []   # required in this release, see below
 serde   = []   # move statements as JSON; the signature covers canonical bytes either way
 legacy-number-arrays = ["serde"]   # also read bytes as JSON number arrays. Off: one spelling per value
 holder  = []   # produce statements. Adds no dependency; it is a guardrail
+verify  = []   # enables nothing; kept so manifests that name it still resolve
 ```
+
+Verification is always built. It needs only public material and no extra dependency, so there is nothing to gate behind a feature.
 
 **`std` is required in this release.** A build without it stops with a `compile_error!` that says so. The crate's own code is close to `no_std`, but `aethel-core` 0.7 also builds as a `cdylib`, which cannot link without std. Real `no_std` support waits on that, and adding it later is additive.
 

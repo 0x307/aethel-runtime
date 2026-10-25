@@ -55,6 +55,14 @@ what it may do.
   `delegate` (with `--max-total` and `--window-secs`), `revoke`, `succeed` and
   `recover`.
 
+### Features
+
+- Default: `std` and `serde`. `holder` and `legacy-number-arrays` are opt-in.
+- `verify` enables nothing. Verification is always built, so there was
+  nothing to gate. The feature is kept, and is no longer in `default`, so a
+  manifest that names it (`features = ["std", "verify", "serde"]`) still
+  resolves.
+
 ### Not in this release
 
 - **Sessions, session request binding, enrolment and the directory**, the flow for a
