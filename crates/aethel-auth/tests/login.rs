@@ -16,14 +16,8 @@ const MAX_AGE: u64 = 300;
 /// Minimal executor. The crate pulls in no async runtime, and none of these
 /// futures actually yield, so polling once is enough.
 fn block_on<F: core::future::Future>(f: F) -> F::Output {
-    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-    fn noop(_: *const ()) {}
-    fn clone(p: *const ()) -> RawWaker {
-        RawWaker::new(p, &VTABLE)
-    }
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
-    let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
-    let mut cx = Context::from_waker(&waker);
+    use core::task::{Context, Poll, Waker};
+    let mut cx = Context::from_waker(Waker::noop());
     let mut f = Box::pin(f);
     match f.as_mut().poll(&mut cx) {
         Poll::Ready(v) => v,

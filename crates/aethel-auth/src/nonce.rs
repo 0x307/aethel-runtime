@@ -120,14 +120,8 @@ mod tests {
     fn block_on<F: Future>(f: F) -> F::Output {
         // A one-shot executor. The crate has no runtime dependency and these
         // futures never actually yield, so polling once is sufficient.
-        use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-        fn noop(_: *const ()) {}
-        fn clone(p: *const ()) -> RawWaker {
-            RawWaker::new(p, &VTABLE)
-        }
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
-        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
-        let mut cx = Context::from_waker(&waker);
+        use core::task::{Context, Poll, Waker};
+        let mut cx = Context::from_waker(Waker::noop());
         let mut f = Box::pin(f);
         match f.as_mut().poll(&mut cx) {
             Poll::Ready(v) => v,

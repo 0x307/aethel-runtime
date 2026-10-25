@@ -65,9 +65,8 @@
 //! statements, with builders for all of them behind the `holder` feature.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-// No unsafe code in the library. Test executors use a no-op waker, which is
-// why this is relaxed under `cfg(test)` and nowhere else.
-#![cfg_attr(not(test), forbid(unsafe_code))]
+// No unsafe code, tests included. Test executors use `Waker::noop()`.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 #[cfg(feature = "serde")]
