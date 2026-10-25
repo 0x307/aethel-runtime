@@ -64,10 +64,22 @@
 //! Built: the login proof, step-up, delegation, and succession and revocation
 //! statements, with builders for all of them behind the `holder` feature.
 
-#![cfg_attr(not(feature = "std"), no_std)]
 // No unsafe code, tests included. Test executors use `Waker::noop()`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+// `std` is required in this release. The crate's own code is close to
+// `no_std` (only the in-memory nonce store and the error impls need std), but
+// aethel-core 0.7 also builds as a `cdylib`, and a `cdylib` without std has no
+// panic handler or allocator, so a `no_std` build of aethel-core cannot link.
+// Failing here, with a reason, beats dozens of errors about `std` paths.
+// Lifting it later is additive: a build that has `std` today keeps it.
+#[cfg(not(feature = "std"))]
+compile_error!(
+    "aethel-auth requires its `std` feature in this release. With \
+     default-features = false, list it: features = [\"std\", ...]. \
+     A no_std build waits on aethel-core building without a cdylib."
+);
 
 #[cfg(feature = "serde")]
 mod b64;

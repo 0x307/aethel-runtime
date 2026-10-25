@@ -65,6 +65,10 @@ what it may do.
 
 ### Requires
 
+- The `std` feature. It is on by default, and a build without it is a
+  `compile_error!` that says why: `aethel-core` 0.7 also builds as a
+  `cdylib`, which cannot link without std. `no_std` support can be added
+  later without breaking a build that has `std`.
 - `aethel-core` 0.7.5 or later. 0.7.2 is the first release that registers
   this crate's purposes. 0.7.5 moves aethel-core to pqc-sig 0.5 with
   byte-identical outputs, so an app that asks for 0.7.4 still builds.

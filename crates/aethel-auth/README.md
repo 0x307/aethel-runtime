@@ -37,6 +37,8 @@ legacy-number-arrays = ["serde"]   # also read bytes as JSON number arrays. Off:
 holder  = []   # produce statements. Adds no dependency; it is a guardrail
 ```
 
+**`std` is required in this release.** A build without it stops with a `compile_error!` that says so. The crate's own code is close to `no_std`, but `aethel-core` 0.7 also builds as a `cdylib`, which cannot link without std. Real `no_std` support waits on that, and adding it later is additive.
+
 A server should never reach for a builder, so `holder` is opt-in and doing so is a compile error rather than a code review. `default_build_stays_verifier_only` fails the build if a holder-side or wallet dependency ever appears in `[dependencies]`, the same way the vault's `manifest_contains_no_ecdsa_crates` guards its own claim.
 
 Plain `rlib`, deliberately. A server-side verifier has no use for a `cdylib`, and a `cdylib` is what stopped `erand-nats` publishing on Linux.

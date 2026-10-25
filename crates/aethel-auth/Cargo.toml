@@ -28,6 +28,11 @@ crate-type = ["rlib"]
 [features]
 default = ["std", "verify", "serde"]
 
+# `std` — required in this release. Building without it is a compile error
+# with the reason: aethel-core 0.7 also builds as a `cdylib`, which cannot
+# link without std. It stays a feature so that lifting the requirement later
+# is additive, and so `default-features = false, features = ["std", ...]`
+# keeps working.
 std = []
 
 # `verify` — check a login proof, a step-up, a delegation, a succession or a
