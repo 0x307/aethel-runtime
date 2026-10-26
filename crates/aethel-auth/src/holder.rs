@@ -83,18 +83,7 @@ impl<'a> Holder<'a> {
     /// part of the wire format so a session flow can be added later without
     /// changing what an agent signs; this release has no session flow.
     pub fn login(&self, nonce: [u8; 32], issued_at: u64, valid_for_secs: u64) -> LoginProof {
-        let mut proof = LoginProof {
-            public_key: self.public_key(),
-            audience: self.audience.clone(),
-            nonce,
-            issued_at,
-            expires_at: issued_at.saturating_add(valid_for_secs),
-            session_commitment: None,
-            request_digest: None,
-            signature: Vec::new(),
-        };
-        proof.signature = self.sign(AUTH_LOGIN_V1, &proof.signing_input());
-        proof
+        self.build_login(nonce, issued_at, valid_for_secs, None)
     }
 
     /// A login proof that is good for one request only.
@@ -111,8 +100,28 @@ impl<'a> Holder<'a> {
         valid_for_secs: u64,
         request_digest: [u8; 32],
     ) -> LoginProof {
-        let mut proof = self.login(nonce, issued_at, valid_for_secs);
-        proof.request_digest = Some(request_digest);
+        self.build_login(nonce, issued_at, valid_for_secs, Some(request_digest))
+    }
+
+    /// One builder for both kinds of login proof, so each is signed once,
+    /// over its final fields.
+    fn build_login(
+        &self,
+        nonce: [u8; 32],
+        issued_at: u64,
+        valid_for_secs: u64,
+        request_digest: Option<[u8; 32]>,
+    ) -> LoginProof {
+        let mut proof = LoginProof {
+            public_key: self.public_key(),
+            audience: self.audience.clone(),
+            nonce,
+            issued_at,
+            expires_at: issued_at.saturating_add(valid_for_secs),
+            session_commitment: None,
+            request_digest,
+            signature: Vec::new(),
+        };
         proof.signature = self.sign(AUTH_LOGIN_V1, &proof.signing_input());
         proof
     }
