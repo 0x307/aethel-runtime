@@ -1,0 +1,138 @@
+//! The JSON shape of the statement types: bytes as canonical base64url text.
+//! The old number-array shape is accepted only with `legacy-number-arrays`.
+
+use aethel_auth::{Holder, LoginProof, Revocation};
+use aethel_core::signing::Identity;
+
+const AUDIENCE: &[u8] = b"https://console.example.com/t/1";
+
+fn proof() -> LoginProof {
+    let id = Identity::generate(&[3u8; 32]).unwrap();
+    let mut proof = Holder::new(&id, AUDIENCE).login([4u8; 32], 1_700_000_000, 60);
+    // The reserved session field, set so its `Some` encoding is exercised too.
+    // Not re-signed: these tests check the JSON shape, not the signature.
+    proof.session_commitment = Some([5u8; 32]);
+    proof
+}
+
+#[test]
+fn a_login_proof_is_compact_text_and_round_trips() {
+    let proof = proof();
+    let json = serde_json::to_string(&proof).unwrap();
+    assert!(
+        json.len() < 8_000,
+        "{} bytes; number arrays made this ~19 KB",
+        json.len()
+    );
+    assert!(!json.contains("[33,"), "no byte arrays in the output");
+    assert_eq!(serde_json::from_str::<LoginProof>(&json).unwrap(), proof);
+}
+
+/// Strict by default: a padded key, a key with trailing bits set, and the
+/// number-array shape are all refused. Control: the canonical proof reads.
+#[test]
+fn non_canonical_spellings_are_refused_by_default() {
+    let proof = proof();
+    let json = serde_json::to_string(&proof).unwrap();
+    assert_eq!(
+        serde_json::from_str::<LoginProof>(&json).unwrap(),
+        proof,
+        "control"
+    );
+
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let key = v["public_key"].as_str().unwrap().to_string();
+
+    let mut padded = v.clone();
+    padded["public_key"] = serde_json::json!(format!("{key}="));
+    assert!(
+        serde_json::from_value::<LoginProof>(padded).is_err(),
+        "padding"
+    );
+
+    // An ML-DSA-65 key is 1,952 bytes: its last character carries 2 unused bits.
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let last = key.as_bytes()[key.len() - 1];
+    let idx = A.iter().position(|&c| c == last).unwrap();
+    let mut bits = v.clone();
+    bits["public_key"] =
+        serde_json::json!(format!("{}{}", &key[..key.len() - 1], A[idx | 1] as char));
+    assert!(
+        serde_json::from_value::<LoginProof>(bits).is_err(),
+        "trailing bits"
+    );
+
+    #[cfg(not(feature = "legacy-number-arrays"))]
+    {
+        let mut arrays = v.clone();
+        arrays["public_key"] = serde_json::json!(proof.public_key);
+        assert!(
+            serde_json::from_value::<LoginProof>(arrays).is_err(),
+            "number arrays"
+        );
+    }
+}
+
+#[cfg(feature = "legacy-number-arrays")]
+#[test]
+fn a_proof_in_the_old_number_array_shape_still_reads() {
+    let proof = proof();
+    let old = serde_json::json!({
+        "public_key": proof.public_key,
+        "audience": proof.audience,
+        "nonce": proof.nonce,
+        "issued_at": proof.issued_at,
+        "expires_at": proof.expires_at,
+        "session_commitment": proof.session_commitment,
+        "signature": proof.signature,
+    });
+    assert!(
+        old.to_string().contains("\"nonce\":[4,4,"),
+        "really the old shape"
+    );
+    assert_eq!(serde_json::from_value::<LoginProof>(old).unwrap(), proof);
+}
+
+#[test]
+fn absent_options_and_wrong_lengths_behave() {
+    let id = Identity::generate(&[6u8; 32]).unwrap();
+    let agent = Holder::new(&id, AUDIENCE).login([7u8; 32], 1_700_000_000, 60);
+    let json = serde_json::to_string(&agent).unwrap();
+    assert!(json.contains("\"session_commitment\":null"));
+    assert!(
+        !json.contains("request_digest"),
+        "an absent request digest is left out, so the JSON is what it was before the field"
+    );
+    assert_eq!(serde_json::from_str::<LoginProof>(&json).unwrap(), agent);
+
+    let bound = Holder::new(&id, AUDIENCE).login_for_request([8u8; 32], 1_700_000_000, 60, [9; 32]);
+    let bound_json = serde_json::to_string(&bound).unwrap();
+    assert!(bound_json.contains("\"request_digest\":\"CQkJ"));
+    assert_eq!(
+        serde_json::from_str::<LoginProof>(&bound_json).unwrap(),
+        bound
+    );
+    let mut short = serde_json::to_value(&bound).unwrap();
+    short["request_digest"] = serde_json::json!("AAAA");
+    assert!(
+        serde_json::from_value::<LoginProof>(short).is_err(),
+        "a request digest must be 32 bytes"
+    );
+
+    let short_nonce = json.replace(
+        &format!(
+            "\"nonce\":{}",
+            serde_json::to_string(&serde_json::to_value(&agent).unwrap()["nonce"]).unwrap()
+        ),
+        "\"nonce\":\"AAAA\"",
+    );
+    assert!(
+        serde_json::from_str::<LoginProof>(&short_nonce).is_err(),
+        "a nonce must be 32 bytes"
+    );
+
+    let revocation = Holder::new(&id, AUDIENCE).revoke_self(1_700_000_000);
+    let back: Revocation =
+        serde_json::from_str(&serde_json::to_string(&revocation).unwrap()).unwrap();
+    assert_eq!(back, revocation);
+}

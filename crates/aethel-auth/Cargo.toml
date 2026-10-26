@@ -1,0 +1,135 @@
+[package]
+name = "aethel-auth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+description = "Delegated authority for post-quantum agent identities: per-request login proofs, bounded delegation, step-up approval, and succession and revocation statements over aethel-core's ML-DSA-65 identities. Verifier-first: the default build is verification only, with no WASM runtime, wallet or classical asymmetric crypto."
+authors = ["Ed Johnson"]
+license = "Apache-2.0"
+repository = "https://github.com/0x307/aethel-runtime"
+homepage = "https://0x307.com/crates"
+documentation = "https://docs.rs/aethel-auth"
+readme = "README.md"
+keywords = ["identity", "post-quantum", "authentication", "delegation", "agent"]
+categories = ["cryptography", "authentication"]
+
+# Plain rlib, deliberately. A server-side verifier has no use for a cdylib,
+# and a cdylib is what stopped `erand-nats` publishing on Linux. The sibling
+# `aethel-vault` needs cdylib for its wasm target; this crate does not.
+[lib]
+crate-type = ["rlib"]
+
+# ── Features ──────────────────────────────────────────────────────────────────
+#
+# Verifier-first. The default build is what a relying party runs: it verifies
+# statements and holds no secret of any kind. Producing statements is the
+# holder's side of the protocol and is opt-in, because a server should never
+# link the machinery for it by accident.
+[features]
+default = ["std", "serde"]
+
+# `std` — required in this release. Building without it is a compile error
+# with the reason: aethel-core 0.7 also builds as a `cdylib`, which cannot
+# link without std. It stays a feature so that lifting the requirement later
+# is additive, and so `default-features = false, features = ["std", ...]`
+# keeps working.
+std = []
+
+# `verify` — enables nothing. Kept so a manifest that names it still
+# resolves. Verification is always built: it needs only public material and
+# no dependency beyond the ones above, so there is nothing to gate, and a
+# build without it would be a relying party that cannot verify. Committing to
+# that now means gating it later can never break a build.
+verify = []
+
+# `serde` — derive Serialize/Deserialize on every statement type.
+#
+# On by default because a statement that cannot cross a wire is not much use:
+# the holder signs in one process and the verifier checks in another, so some
+# encoding always exists. Better one in the crate both ends share than two
+# hand-rolled ones that agree until they do not.
+#
+# JSON is not the canonical form. `signing_input` is, and it is
+# length-prefixed and independent of this. serde moves the struct; the
+# signature covers the canonical bytes either way.
+serde = ["dep:serde"]
+
+# `legacy-number-arrays` — also accept bytes as JSON arrays of numbers, the
+# shape before base64url. Off by default: nothing needs it, and a verifier
+# should accept one spelling per value.
+legacy-number-arrays = ["serde"]
+
+# `holder` — produce those statements rather than check them.
+#
+# Adds no dependency: signing needs `aethel_core::signing::Identity`, which is
+# already here. The gate is not about cost, it is a guardrail — a server that
+# reaches for a builder is doing something it should not, and this makes that
+# a compile error rather than a code review.
+holder = []
+
+[dependencies]
+# `default-features = false` plus `std` keeps the component and enclave
+# machinery out: this crate needs the signing and verification surface,
+# nothing else. 0.7.2 is the first release that registers this crate's
+# purposes; an older 0.7 resolves and then fails to compile.
+#
+# The floor is 0.7.5, the release that moves aethel-core to pqc-sig 0.5 with
+# byte-identical outputs. An app that asks for aethel-core "0.7.4" still
+# builds: cargo picks 0.7.5 for both. An app on pqc-sig 0.4 still builds:
+# pqc-sig 0.4 and 0.5 resolve side by side, and no pqc-sig type is in either
+# crate's public API.
+aethel-core = { version = "0.7.5", default-features = false, features = ["std"] }
+
+# Version floor only. This crate never uses ctutils directly. aethel-core
+# reaches it through pqc-sig's ML-DSA (ml-dsa, hybrid-array, digest), on every
+# build, and ctutils < 0.4.4 has RUSTSEC-2026-0385 (non-constant-time mask
+# generation and u128 comparisons). Naming it here stops any resolver,
+# including the MSRV-aware fallback, from choosing an affected version. 0.4.4
+# needs Rust 1.87, which sets this crate's rust-version. Same floor as pqc-sig
+# 0.5.1 and aethel-vault 0.3.3.
+ctutils = { version = "0.4.4", default-features = false }
+
+# SHAKE-256, for key fingerprints. The same hash and the same version
+# aethel-core itself uses, so this adds no new algorithm to the trust surface.
+sha3 = { version = "0.10", default-features = false }
+
+# Constant-time equality for the step-up's action digest. Comparing with
+# `==` leaks how many leading bytes matched, and a hand-rolled loop is liable
+# to be optimised back into an early return. `subtle` exists
+# to stop exactly that and is the ecosystem's standard answer.
+subtle = { version = "2.6", default-features = false }
+
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[dev-dependencies]
+# Only for the wire-format test. Not a runtime dependency: the canonical
+# encoding is length-prefixed bytes, and nothing this crate verifies is JSON.
+serde_json = "1.0"
+
+# Benchmarks. In `benches/`, run by `cargo bench`, with a baseline and a
+# statistical model. `default-features = false` drops the plotting stack.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "authority"
+harness = false
+# Verifying a statement means having one, and building one is the holder's
+# job. Declared here rather than skipped at runtime, so benching without the
+# feature fails to select the target instead of measuring a subset and
+# reporting success.
+required-features = ["holder"]
+
+[[test]]
+name = "holder_roundtrip"
+path = "tests/holder_roundtrip.rs"
+required-features = ["holder"]
+
+[[test]]
+name = "wire_json"
+path = "tests/wire_json.rs"
+required-features = ["holder"]
+
+[[test]]
+name = "compat_f43ef88"
+path = "tests/compat_f43ef88.rs"
+required-features = ["serde"]

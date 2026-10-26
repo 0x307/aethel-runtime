@@ -38,7 +38,9 @@ jobs:
         id: deny
         with:
           command: check ${{ matrix.checks }}
-          arguments: --config deny.toml
+          # --workspace: the root package is aethel-vault, so without it
+          # cargo-deny checks only the vault and never aethel-auth or its CLI.
+          arguments: --workspace --config deny.toml
 
   open-issue-on-failure:
     needs: cargo-deny
