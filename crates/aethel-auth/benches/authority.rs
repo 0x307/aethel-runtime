@@ -140,6 +140,8 @@ fn delegation(c: &mut Criterion) {
     };
     let delegate_key_copy = delegate_key.clone();
     let delegation = principal.delegate_to(delegate_key, bounds, NOW, NOW + 3600);
+    let principals = [delegation.principal_key.clone()];
+    let no_revocations: &[Vec<u8>] = &[];
 
     group.bench_function("verify_delegation", |b| {
         b.iter(|| verify_delegation(&delegation, AUDIENCE, NOW).expect("verify"))
@@ -150,6 +152,8 @@ fn delegation(c: &mut Criterion) {
             authorise(
                 &delegation,
                 AUDIENCE,
+                &principals,
+                no_revocations,
                 &delegate_key_copy,
                 b"transfer",
                 Some(100),

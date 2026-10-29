@@ -50,8 +50,13 @@ pub enum AuthError {
     /// action, over a bound, outside its window, or not for this audience.
     NotDelegated,
     /// The signer was not entitled to make this statement: a holder revoking
-    /// a key that is not theirs, or an unrecognised authority.
+    /// a key that is not theirs, an unrecognised authority, a delegation from
+    /// a principal this relying party does not recognise, or an approval not
+    /// signed by the delegation's principal.
     NotAuthorised,
+    /// A delegation's principal or delegate key is one the relying party has
+    /// seen revoked.
+    Revoked,
     /// The input could not be parsed at all.
     Malformed,
     /// The nonce store failed. Distinct from a rejection: the
@@ -101,6 +106,7 @@ impl fmt::Display for AuthError {
             }
             AuthError::NotDelegated => write!(f, "delegation does not authorise this"),
             AuthError::NotAuthorised => write!(f, "signer is not entitled to make this statement"),
+            AuthError::Revoked => write!(f, "a key in this delegation has been revoked"),
             AuthError::Malformed => write!(f, "input could not be parsed"),
             AuthError::Store(e) => write!(f, "store failure: {e}"),
         }
@@ -147,6 +153,7 @@ mod tests {
             AuthError::RequestDigestNotChecked,
             AuthError::NotDelegated,
             AuthError::NotAuthorised,
+            AuthError::Revoked,
             AuthError::Malformed,
         ];
 

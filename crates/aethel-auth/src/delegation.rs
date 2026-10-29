@@ -46,10 +46,21 @@
 //! every delegation it issued at that relying party.
 //!
 //! So a relying party must refuse a delegation whose `principal_key` or
-//! `delegate_key` it has seen a verified revocation for. [`authorise`] cannot
-//! check that, because the set of revoked keys is the relying party's state.
-//! [`Delegation::id`] gives it a stable key to track a delegation by, for that
-//! and for the running total.
+//! `delegate_key` it has seen a verified revocation for. The set of revoked
+//! keys is the relying party's state, so [`authorise`] takes it as an input
+//! ([`RevokedKeys`]) and refuses either key in it. A caller cannot reach
+//! "authorised" without saying what it knows about revocation.
+//! [`Delegation::id`] gives it a stable key to track a delegation by, for the
+//! running total.
+//!
+//! # Whose delegation it is
+//!
+//! A delegation is signed by its own `principal_key`, so the signature proves
+//! only that *some* key granted it. Anyone can make a key and delegate to an
+//! agent. Which principals count at this relying party (the accounts it has
+//! enrolled) is the relying party's state too, so [`authorise`] takes the set
+//! it recognises and refuses any other, the way [`crate::verify_revocation`]
+//! takes the authority keys it recognises.
 //!
 //! # No sub-delegation
 //!
@@ -60,8 +71,51 @@
 use aethel_core::signing::verify_with_purpose;
 
 use crate::error::AuthError;
-use crate::proof::{push_len_prefixed, shake256_32, AuthMethod, AuthenticatedIdentity};
+use crate::nonce::NonceStore;
+use crate::proof::{push_len_prefixed, shake256_32, verify_step_up, StepUpProof, VerifyParams};
 use crate::purposes::AUTH_DELEGATION_V1;
+
+/// The keys this relying party has seen a verified revocation for.
+///
+/// [`authorise`] asks it about both keys of a delegation. Implemented for a
+/// slice of keys, for `std`'s `HashSet` and `BTreeSet` of keys, and for any
+/// `Fn(&[u8]) -> bool`, so a relying party can answer from its own store.
+///
+/// Keys are compared as decoded bytes. Never answer this by comparing keys as
+/// text: a store keyed on one text spelling of a key misses the same key
+/// spelled another way, which is how a revoked key came back on 2026-10-14.
+///
+/// A relying party that has never received a revocation passes an empty
+/// slice, `&[] as &[Vec<u8>]`. That is a statement about its state, made at
+/// the call, rather than a default nobody chose.
+pub trait RevokedKeys {
+    /// Whether `public_key` has been revoked at this relying party.
+    fn is_revoked(&self, public_key: &[u8]) -> bool;
+}
+
+impl RevokedKeys for [Vec<u8>] {
+    fn is_revoked(&self, public_key: &[u8]) -> bool {
+        self.iter().any(|k| k == public_key)
+    }
+}
+
+impl<F: Fn(&[u8]) -> bool> RevokedKeys for F {
+    fn is_revoked(&self, public_key: &[u8]) -> bool {
+        self(public_key)
+    }
+}
+
+impl<S: core::hash::BuildHasher> RevokedKeys for std::collections::HashSet<Vec<u8>, S> {
+    fn is_revoked(&self, public_key: &[u8]) -> bool {
+        self.contains(public_key)
+    }
+}
+
+impl RevokedKeys for std::collections::BTreeSet<Vec<u8>> {
+    fn is_revoked(&self, public_key: &[u8]) -> bool {
+        self.contains(public_key)
+    }
+}
 
 /// What a delegate is permitted to do.
 ///
@@ -205,16 +259,18 @@ impl Delegation {
 
 /// What the relying party must still enforce after [`authorise`] succeeds.
 ///
-/// Three things only the relying party can do, because only it holds the
-/// state: keep the running total, obtain the principal's approval, and refuse
-/// a delegation whose keys it has seen revoked (see "Ending a delegation" in
-/// this module's docs).
+/// Two things only the relying party can do: keep the running total, and
+/// obtain the principal's approval. Revocation and the principal are not
+/// here, because [`authorise`] has already checked both against what the
+/// caller passed it.
 ///
 /// Returned rather than checked, because this crate holds no running totals
 /// and cannot ask a human. Returning it makes the remaining obligation
-/// explicit at the call site instead of leaving a cap silently unchecked.
+/// explicit at the call site instead of leaving a cap silently unchecked, and
+/// `#[must_use]` makes ignoring it a warning.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a delegation can leave a running total or an approval to the caller"]
 pub struct RemainingObligations {
     /// Keep a running total for this delegate and refuse once it would exceed
     /// this over `window_secs`.
@@ -222,18 +278,17 @@ pub struct RemainingObligations {
     /// The window the ceiling applies over.
     pub window_secs: Option<u64>,
     /// This invocation is above the principal's approval threshold. Do not
-    /// proceed until the **principal** has signed a step-up for this action.
-    ///
-    /// Verify that step-up with [`crate::verify_step_up`], then pass the
-    /// result to [`check_approval`]. The step-up must come from the
-    /// delegation's `principal_key`: a step-up from the delegate is the agent
-    /// approving itself, and `verify_step_up` alone does not know which key
-    /// it should be.
+    /// proceed until the **principal** has signed a step-up approving this
+    /// request under this delegation, and [`check_approval`] has accepted it.
     pub human_approval_required: bool,
 }
 
 impl RemainingObligations {
-    /// Whether the caller can proceed with no further checks of its own.
+    /// Whether the caller can proceed with no further checks of its own:
+    /// there is no running total to keep and no approval to obtain.
+    ///
+    /// The principal and revocation checks are not the caller's here; they
+    /// were inputs to [`authorise`], which refused on either.
     pub fn is_clear(&self) -> bool {
         self.cumulative_ceiling.is_none() && !self.human_approval_required
     }
@@ -281,19 +336,46 @@ pub fn verify_delegation(
 
 /// Decide whether a delegation authorises a specific attempt.
 ///
-/// `delegate_key` is the identity that actually presented a proof, which the
-/// caller has already authenticated. Checking it against the delegation is
-/// what stops a valid delegation being used by someone it was not issued to.
-///
-/// `amount` is `None` for an action carrying no quantity.
-pub fn authorise(
+/// - `principals` is the set of principal keys this relying party recognises:
+///   the accounts it has enrolled, or the one account this request is for. A
+///   delegation from any other key is refused with
+///   [`AuthError::NotAuthorised`], however well it is signed. An empty set
+///   recognises nobody.
+/// - `revoked` is what this relying party knows about revocation. A
+///   delegation whose principal or delegate key is in it is refused with
+///   [`AuthError::Revoked`].
+/// - `delegate_key` is the identity that actually presented a proof, which the
+///   caller has already authenticated. Checking it against the delegation is
+///   what stops a valid delegation being used by someone it was not issued to.
+/// - `amount` is the quantity this attempt carries. `None` is accepted only
+///   under a delegation that sets no amount bound at all (no
+///   `max_per_invocation`, `max_total` or `approval_required_above`). Under a
+///   delegation that sets one, `None` is refused, because "the caller did not
+///   say" and "there is nothing to count" look the same here and only one of
+///   them is safe. An action that carries no quantity under a bounded
+///   delegation passes `Some(0)`, which says so.
+#[allow(clippy::too_many_arguments)]
+pub fn authorise<R: RevokedKeys + ?Sized>(
     delegation: &Delegation,
     expected_audience: &[u8],
+    principals: &[Vec<u8>],
+    revoked: &R,
     delegate_key: &[u8],
     action: &[u8],
     amount: Option<u128>,
     now: u64,
 ) -> Result<RemainingObligations, AuthError> {
+    // Set membership before the signature: both are cheap, and the public
+    // error is the same for every refusal, so the order tells a prober
+    // nothing.
+    if !principals.contains(&delegation.principal_key) {
+        return Err(AuthError::NotAuthorised);
+    }
+    if revoked.is_revoked(&delegation.principal_key) || revoked.is_revoked(&delegation.delegate_key)
+    {
+        return Err(AuthError::Revoked);
+    }
+
     verify_delegation(delegation, expected_audience, now)?;
 
     if delegation.delegate_key != delegate_key {
@@ -301,6 +383,14 @@ pub fn authorise(
     }
 
     if !delegation.bounds.actions.iter().any(|a| a == action) {
+        return Err(AuthError::NotDelegated);
+    }
+
+    let bounds = &delegation.bounds;
+    let sets_an_amount_bound = bounds.max_per_invocation.is_some()
+        || bounds.max_total.is_some()
+        || bounds.approval_required_above.is_some();
+    if amount.is_none() && sets_an_amount_bound {
         return Err(AuthError::NotDelegated);
     }
 
@@ -326,28 +416,56 @@ pub fn authorise(
     })
 }
 
-/// Check that a verified step-up approves a request under this delegation.
+/// The digest a principal signs, as a step-up's `action_digest`, to approve
+/// one request under one delegation.
 ///
-/// `approval` is what [`crate::verify_step_up`] returned for the step-up the
-/// relying party asked for, with the action digest of the request being
-/// approved. This adds the check that call cannot make: the step-up was
-/// signed by the delegation's **principal**, at the delegation's audience.
+/// `SHAKE-256` over a domain label, [`Delegation::id`] and `request_digest`,
+/// each length-prefixed. `request_digest` is the relying party's own digest
+/// of the request being approved (its action, its amount and anything else it
+/// relies on), computed from the request it received, never taken from the
+/// client. Folding the delegation id in means an approval for a request under
+/// one delegation does not approve a request under another.
 ///
-/// Refuses a step-up from the delegate (the agent approving its own request),
-/// from any other key, and anything established by a mechanism other than a
-/// step-up, such as a login proof.
-pub fn check_approval(
+/// The holder builds the step-up with `Holder::approve`, which calls this.
+pub fn approval_digest(delegation: &Delegation, request_digest: &[u8; 32]) -> [u8; 32] {
+    let mut input = Vec::with_capacity(96);
+    push_len_prefixed(&mut input, b"aethel-auth/approval/v1");
+    push_len_prefixed(&mut input, &delegation.id());
+    push_len_prefixed(&mut input, request_digest);
+    shake256_32(&input)
+}
+
+/// Verify the principal's approval of one request under this delegation, and
+/// spend its nonce.
+///
+/// Verifies `step_up` itself rather than accepting the result of an earlier
+/// verification. The step-up must be signed by the delegation's
+/// **principal**, at the delegation's audience, over
+/// [`approval_digest`]`(delegation, request_digest)`. So the approval names
+/// this delegation and this request, and nothing short of the principal's
+/// signature passes.
+///
+/// `request_digest` is computed by the relying party from the request it is
+/// about to perform, the same way the holder computed it before signing.
+///
+/// Refuses a step-up from the delegate (the agent approving its own request)
+/// or any other key, one for another request or another delegation, one for
+/// another audience, and a replay. `params.expected_audience` must be the
+/// delegation's audience.
+pub async fn check_approval<N: NonceStore>(
     delegation: &Delegation,
-    approval: &AuthenticatedIdentity,
+    step_up: &StepUpProof,
+    params: VerifyParams<'_>,
+    request_digest: &[u8; 32],
+    nonces: &N,
 ) -> Result<(), AuthError> {
-    if approval.method != AuthMethod::StepUp {
-        return Err(AuthError::NotAuthorised);
-    }
-    if approval.audience != delegation.audience {
+    if params.expected_audience != delegation.audience.as_slice() {
         return Err(AuthError::AudienceMismatch);
     }
-    if approval.public_key != delegation.principal_key {
+    if step_up.public_key != delegation.principal_key {
         return Err(AuthError::NotAuthorised);
     }
+    let expected = approval_digest(delegation, request_digest);
+    verify_step_up(step_up, params, &expected, nonces).await?;
     Ok(())
 }

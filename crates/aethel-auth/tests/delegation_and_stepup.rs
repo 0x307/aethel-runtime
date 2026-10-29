@@ -4,9 +4,9 @@
 //! defaulted. Every case where a field was left unset asserts a refusal.
 
 use aethel_auth::{
-    authorise, check_approval, purposes, verify_delegation, verify_step_up, AuthError, AuthMethod,
-    AuthStrength, AuthenticatedIdentity, Bounds, Delegation, InMemoryNonceStore, StepUpProof,
-    VerifyParams,
+    approval_digest, authorise, check_approval, purposes, verify_delegation, verify_step_up,
+    AuthError, AuthMethod, Bounds, Delegation, InMemoryNonceStore, RemainingObligations,
+    StepUpProof, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -162,6 +162,31 @@ fn make_delegation(
     d
 }
 
+const NO_REVOCATIONS: &[Vec<u8>] = &[];
+
+/// `authorise` at a relying party that recognises this delegation's principal
+/// and has seen no revocations. For tests about bounds, audience and the
+/// delegate; the principal and revocation tests call `authorise` directly.
+fn authorise_here(
+    d: &Delegation,
+    audience: &[u8],
+    delegate_key: &[u8],
+    action: &[u8],
+    amount: Option<u128>,
+    now: u64,
+) -> Result<RemainingObligations, AuthError> {
+    authorise(
+        d,
+        audience,
+        std::slice::from_ref(&d.principal_key),
+        NO_REVOCATIONS,
+        delegate_key,
+        action,
+        amount,
+        now,
+    )
+}
+
 fn spend_bounds() -> Bounds {
     Bounds {
         actions: vec![b"transfer".to_vec(), b"refund".to_vec()],
@@ -178,7 +203,7 @@ fn a_delegate_may_act_within_the_bounds_the_principal_signed() {
     let delegate = identity(31);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
-    let obligations = authorise(
+    let obligations = authorise_here(
         &d,
         AUDIENCE,
         &delegate.public_key(),
@@ -221,7 +246,7 @@ fn a_valid_delegation_does_not_authorise_a_different_delegate() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(
+        authorise_here(
             &d,
             AUDIENCE,
             &impostor.public_key(),
@@ -258,7 +283,7 @@ fn an_action_outside_the_allow_list_is_refused() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(
+        authorise_here(
             &d,
             AUDIENCE,
             &delegate.public_key(),
@@ -278,7 +303,7 @@ fn an_empty_allow_list_grants_nothing_rather_than_everything() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, Bounds::default());
 
     assert_eq!(
-        authorise(&d, AUDIENCE, &delegate.public_key(), b"transfer", None, NOW).unwrap_err(),
+        authorise_here(&d, AUDIENCE, &delegate.public_key(), b"transfer", None, NOW).unwrap_err(),
         AuthError::NotDelegated,
         "a delegation that forgot to say what it allowed must allow nothing"
     );
@@ -296,7 +321,7 @@ fn an_amount_with_no_ceiling_set_is_refused_rather_than_unlimited() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, bounds);
 
     assert_eq!(
-        authorise(
+        authorise_here(
             &d,
             AUDIENCE,
             &delegate.public_key(),
@@ -318,7 +343,7 @@ fn an_amount_over_the_per_invocation_ceiling_is_refused() {
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
     assert_eq!(
-        authorise(
+        authorise_here(
             &d,
             AUDIENCE,
             &delegate.public_key(),
@@ -330,7 +355,7 @@ fn an_amount_over_the_per_invocation_ceiling_is_refused() {
         AuthError::NotDelegated
     );
     assert!(
-        authorise(
+        authorise_here(
             &d,
             AUDIENCE,
             &delegate.public_key(),
@@ -349,7 +374,7 @@ fn crossing_the_approval_threshold_reports_an_obligation_rather_than_refusing() 
     let delegate = identity(49);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
-    let under = authorise(
+    let under = authorise_here(
         &d,
         AUDIENCE,
         &delegate.public_key(),
@@ -360,7 +385,7 @@ fn crossing_the_approval_threshold_reports_an_obligation_rather_than_refusing() 
     .unwrap();
     assert!(!under.human_approval_required, "the threshold is exclusive");
 
-    let over = authorise(
+    let over = authorise_here(
         &d,
         AUDIENCE,
         &delegate.public_key(),
@@ -460,8 +485,23 @@ fn none_and_some_zero_are_different_grants() {
 
 // ── Approval above the threshold ─────────────────────────────────────────────
 
-/// The principal's step-up approves; the agent's own step-up, for the same
-/// action at the same audience, does not. Both halves in one test, so the
+/// The relying party's own digest of the request being approved. The crate
+/// does not interpret it; these tests only need two different ones.
+const REQUEST: [u8; 32] = [0x40; 32];
+const OTHER_REQUEST: [u8; 32] = [0x41; 32];
+
+fn approval_by(
+    signer: &Identity,
+    d: &Delegation,
+    audience: &[u8],
+    request: [u8; 32],
+    nonce: u8,
+) -> StepUpProof {
+    make_step_up(signer, audience, [nonce; 32], approval_digest(d, &request))
+}
+
+/// The principal's approval passes; the agent's own, for the same request
+/// under the same delegation, does not. Both halves in one test, so the
 /// refusal cannot pass by refusing everything.
 #[test]
 fn only_the_principal_can_approve_an_over_threshold_request() {
@@ -469,7 +509,7 @@ fn only_the_principal_can_approve_an_over_threshold_request() {
     let delegate = identity(61);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
 
-    let obligations = authorise(
+    let obligations = authorise_here(
         &d,
         AUDIENCE,
         &delegate.public_key(),
@@ -483,74 +523,310 @@ fn only_the_principal_can_approve_an_over_threshold_request() {
         "400 is above the 250 threshold"
     );
 
-    let action = [0x40; 32];
     let nonces = InMemoryNonceStore::new();
-
-    let from_principal = block_on(verify_step_up(
-        &make_step_up(&principal, AUDIENCE, [60u8; 32], action),
+    let from_principal = approval_by(&principal, &d, AUDIENCE, REQUEST, 60);
+    block_on(check_approval(
+        &d,
+        &from_principal,
         params(),
-        &action,
+        &REQUEST,
         &nonces,
     ))
-    .expect("a valid step-up");
-    check_approval(&d, &from_principal).expect("the principal approves");
+    .expect("the principal approves");
 
-    let from_agent = block_on(verify_step_up(
-        &make_step_up(&delegate, AUDIENCE, [61u8; 32], action),
-        params(),
-        &action,
-        &nonces,
-    ))
-    .expect("a valid step-up, by the wrong key");
+    let from_agent = approval_by(&delegate, &d, AUDIENCE, REQUEST, 61);
     assert_eq!(
-        check_approval(&d, &from_agent).unwrap_err(),
+        block_on(check_approval(&d, &from_agent, params(), &REQUEST, &nonces)).unwrap_err(),
         AuthError::NotAuthorised,
         "the agent must not be able to approve its own request"
     );
 }
 
+/// An approval is a signature, so there is nothing to hand-build. A step-up
+/// carrying the principal's key with a signature by anyone else is refused.
 #[test]
-fn a_login_is_not_an_approval_even_from_the_principal() {
+fn an_approval_without_the_principals_signature_is_refused() {
     let principal = identity(62);
     let delegate = identity(63);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
 
-    let as_login = AuthenticatedIdentity {
-        public_key: principal.public_key(),
-        audience: AUDIENCE.to_vec(),
-        strength: AuthStrength::Proven,
-        method: AuthMethod::LoginProof,
-        session_commitment: None,
-    };
+    let mut forged = approval_by(&delegate, &d, AUDIENCE, REQUEST, 62);
+    forged.public_key = principal.public_key();
     assert_eq!(
-        check_approval(&d, &as_login).unwrap_err(),
-        AuthError::NotAuthorised
+        block_on(check_approval(&d, &forged, params(), &REQUEST, &nonces)).unwrap_err(),
+        AuthError::BadSignature
     );
 
-    let as_step_up = AuthenticatedIdentity {
-        method: AuthMethod::StepUp,
-        ..as_login
-    };
-    check_approval(&d, &as_step_up).expect("the same key, as a step-up, approves");
+    let genuine = approval_by(&principal, &d, AUDIENCE, REQUEST, 63);
+    block_on(check_approval(&d, &genuine, params(), &REQUEST, &nonces))
+        .expect("the principal's own signature approves");
+}
+
+#[test]
+fn an_approval_names_one_request() {
+    let principal = identity(64);
+    let delegate = identity(65);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
+
+    let approval = approval_by(&principal, &d, AUDIENCE, REQUEST, 64);
+    assert_eq!(
+        block_on(check_approval(
+            &d,
+            &approval,
+            params(),
+            &OTHER_REQUEST,
+            &nonces
+        ))
+        .unwrap_err(),
+        AuthError::ActionMismatch
+    );
+    block_on(check_approval(&d, &approval, params(), &REQUEST, &nonces))
+        .expect("the request it was signed for");
+}
+
+/// Same principal, same request digest, a different delegation: the
+/// delegation id inside the approval digest keeps them apart.
+#[test]
+fn an_approval_names_one_delegation() {
+    let principal = identity(66);
+    let d1 = make_delegation(&principal, &identity(67), AUDIENCE, spend_bounds());
+    let d2 = make_delegation(&principal, &identity(68), AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
+
+    let for_d1 = approval_by(&principal, &d1, AUDIENCE, REQUEST, 66);
+    assert_eq!(
+        block_on(check_approval(&d2, &for_d1, params(), &REQUEST, &nonces)).unwrap_err(),
+        AuthError::ActionMismatch
+    );
+    block_on(check_approval(&d1, &for_d1, params(), &REQUEST, &nonces))
+        .expect("the delegation it was signed for");
+}
+
+/// A bare step-up over the request digest alone, the 0.1.0 shape, does not
+/// approve: the principal must sign the approval digest.
+#[test]
+fn a_step_up_over_the_bare_request_is_not_an_approval() {
+    let principal = identity(69);
+    let d = make_delegation(&principal, &identity(70), AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
+
+    let bare = make_step_up(&principal, AUDIENCE, [69u8; 32], REQUEST);
+    assert_eq!(
+        block_on(check_approval(&d, &bare, params(), &REQUEST, &nonces)).unwrap_err(),
+        AuthError::ActionMismatch
+    );
 }
 
 #[test]
 fn an_approval_from_another_audience_is_refused() {
-    let principal = identity(64);
-    let delegate = identity(65);
+    let principal = identity(71);
+    let delegate = identity(72);
     let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
 
-    let elsewhere = AuthenticatedIdentity {
-        public_key: principal.public_key(),
-        audience: OTHER_AUDIENCE.to_vec(),
-        strength: AuthStrength::Proven,
-        method: AuthMethod::StepUp,
-        session_commitment: None,
-    };
+    let elsewhere = approval_by(&principal, &d, OTHER_AUDIENCE, REQUEST, 71);
     assert_eq!(
-        check_approval(&d, &elsewhere).unwrap_err(),
+        block_on(check_approval(&d, &elsewhere, params(), &REQUEST, &nonces)).unwrap_err(),
         AuthError::AudienceMismatch
     );
+
+    let other_params = VerifyParams {
+        expected_audience: OTHER_AUDIENCE,
+        ..params()
+    };
+    assert_eq!(
+        block_on(check_approval(
+            &d,
+            &elsewhere,
+            other_params,
+            &REQUEST,
+            &nonces
+        ))
+        .unwrap_err(),
+        AuthError::AudienceMismatch,
+        "a relying party checking at another audience than the delegation's"
+    );
+}
+
+#[test]
+fn an_approval_cannot_be_replayed() {
+    let principal = identity(73);
+    let d = make_delegation(&principal, &identity(74), AUDIENCE, spend_bounds());
+    let nonces = InMemoryNonceStore::new();
+
+    let approval = approval_by(&principal, &d, AUDIENCE, REQUEST, 73);
+    block_on(check_approval(&d, &approval, params(), &REQUEST, &nonces)).expect("first use");
+    assert_eq!(
+        block_on(check_approval(&d, &approval, params(), &REQUEST, &nonces)).unwrap_err(),
+        AuthError::NonceAlreadyUsed
+    );
+}
+
+// ── Principal and revocation ─────────────────────────────────────────────────
+
+/// A delegation is signed by its own principal, so a stranger can make one.
+/// It authorises only when the relying party recognises that principal.
+#[test]
+fn a_delegation_from_an_unrecognised_principal_is_refused() {
+    let enrolled = identity(80);
+    let stranger = identity(81);
+    let delegate = identity(82);
+    let from_stranger = make_delegation(&stranger, &delegate, AUDIENCE, spend_bounds());
+    let principals = [enrolled.public_key()];
+
+    assert_eq!(
+        authorise(
+            &from_stranger,
+            AUDIENCE,
+            &principals,
+            NO_REVOCATIONS,
+            &delegate.public_key(),
+            b"transfer",
+            Some(100),
+            NOW,
+        )
+        .unwrap_err(),
+        AuthError::NotAuthorised
+    );
+    assert_eq!(
+        authorise(
+            &from_stranger,
+            AUDIENCE,
+            &[],
+            NO_REVOCATIONS,
+            &delegate.public_key(),
+            b"transfer",
+            Some(100),
+            NOW,
+        )
+        .unwrap_err(),
+        AuthError::NotAuthorised,
+        "an empty set recognises nobody"
+    );
+
+    let from_enrolled = make_delegation(&enrolled, &delegate, AUDIENCE, spend_bounds());
+    let _ = authorise(
+        &from_enrolled,
+        AUDIENCE,
+        &principals,
+        NO_REVOCATIONS,
+        &delegate.public_key(),
+        b"transfer",
+        Some(100),
+        NOW,
+    )
+    .expect("the enrolled principal's delegation");
+}
+
+#[test]
+fn a_revoked_principal_or_delegate_ends_the_delegation() {
+    let principal = identity(83);
+    let delegate = identity(84);
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+    let principals = [principal.public_key()];
+
+    let run = |revoked: &dyn Fn(&[u8]) -> bool| {
+        authorise(
+            &d,
+            AUDIENCE,
+            &principals,
+            &revoked,
+            &delegate.public_key(),
+            b"transfer",
+            Some(100),
+            NOW,
+        )
+    };
+
+    let _ = run(&|_: &[u8]| false).expect("nothing revoked");
+    assert_eq!(
+        run(&|k: &[u8]| k == principal.public_key()).unwrap_err(),
+        AuthError::Revoked
+    );
+    assert_eq!(
+        run(&|k: &[u8]| k == delegate.public_key()).unwrap_err(),
+        AuthError::Revoked
+    );
+
+    let set: std::collections::HashSet<Vec<u8>> = [principal.public_key()].into_iter().collect();
+    assert_eq!(
+        authorise(
+            &d,
+            AUDIENCE,
+            &principals,
+            &set,
+            &delegate.public_key(),
+            b"transfer",
+            Some(100),
+            NOW,
+        )
+        .unwrap_err(),
+        AuthError::Revoked,
+        "a HashSet of revoked keys"
+    );
+}
+
+// ── Amount ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn no_amount_under_a_bounded_delegation_is_refused() {
+    let principal = identity(85);
+    let delegate = identity(86);
+    for bounds in [
+        Bounds {
+            max_per_invocation: Some(500),
+            ..Bounds::default()
+        },
+        Bounds {
+            max_total: Some(2_000),
+            window_secs: Some(86_400),
+            ..Bounds::default()
+        },
+        Bounds {
+            approval_required_above: Some(250),
+            ..Bounds::default()
+        },
+    ] {
+        let bounds = Bounds {
+            actions: vec![b"transfer".to_vec()],
+            ..bounds
+        };
+        let d = make_delegation(&principal, &delegate, AUDIENCE, bounds.clone());
+        assert_eq!(
+            authorise_here(&d, AUDIENCE, &delegate.public_key(), b"transfer", None, NOW)
+                .unwrap_err(),
+            AuthError::NotDelegated,
+            "None under {bounds:?}"
+        );
+    }
+
+    let d = make_delegation(&principal, &delegate, AUDIENCE, spend_bounds());
+    let zero = authorise_here(
+        &d,
+        AUDIENCE,
+        &delegate.public_key(),
+        b"transfer",
+        Some(0),
+        NOW,
+    )
+    .expect("Some(0) says there is nothing to count");
+    assert!(!zero.human_approval_required);
+}
+
+#[test]
+fn no_amount_under_a_delegation_with_no_amount_bound_is_accepted() {
+    let principal = identity(87);
+    let delegate = identity(88);
+    let bounds = Bounds {
+        actions: vec![b"read".to_vec()],
+        ..Bounds::default()
+    };
+    let d = make_delegation(&principal, &delegate, AUDIENCE, bounds);
+    let obligations = authorise_here(&d, AUDIENCE, &delegate.public_key(), b"read", None, NOW)
+        .expect("nothing to bound");
+    assert!(obligations.is_clear());
 }
 
 // ── Delegation id ────────────────────────────────────────────────────────────

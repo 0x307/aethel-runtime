@@ -8,7 +8,7 @@ Delegated authority for post-quantum agent identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: 0.1.0, not yet on crates.io.** Per-request login proof (optionally bound to one request), bounded delegation, step-up approval, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
+> **Status: 0.2.0.** Per-request login proof (optionally bound to one request), bounded delegation, step-up approval, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
 
 ## What a service hosts, and what an agent holds
 
@@ -58,13 +58,19 @@ This crate registers its purposes in `aethel-core`'s central registry rather tha
 
 ## What the relying party still enforces
 
-`authorise` checks that a delegation is genuine, live, for this relying party, issued to the key that just proved itself, and that the action and amount fall inside its declared bounds. It returns `RemainingObligations` for what only the relying party can check:
+`authorise` checks that a delegation is genuine, live, for this relying party, from a principal the relying party recognises, with neither key revoked, issued to the key that just proved itself, and that the action and amount fall inside its declared bounds. The relying party brings two things it alone knows:
 
-- **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`.
-- **Human approval.** Above `approval_required_above`, hold the request until the **principal** signs a step-up for that action. Verify it with `verify_step_up`, then `check_approval`, which refuses a step-up from the agent itself.
-- **Revocation.** Keep the revocations you have verified, and refuse a delegation whose principal or delegate key is revoked. A principal ends its delegates' authority by revoking its own key at that relying party. `Delegation::id` gives you a stable key for the running total and for this. It is one id per distinct signed statement. Signing is deterministic, so a principal that signs identical terms twice gets the same id and one shared total; to give a separate budget, change a term such as `not_before`.
+- **Which principals it recognises.** A delegation is signed by its own principal, so anyone can make one. Pass the principal keys you have enrolled (or the one account the request is for). Any other principal is refused.
+- **What it has seen revoked.** Keep the revocations you have verified and pass them as `RevokedKeys`: a slice or set of keys, or a closure over your own store. A delegation whose principal or delegate key is revoked is refused. A principal ends its delegates' authority by revoking its own key at that relying party. Compare keys as bytes, never as text.
 
-A caller that ignores the return value has left a cap unchecked. That is why it is returned rather than checked silently.
+An amount is required under a delegation that sets any amount bound. `None` there is refused, because a caller that failed to read the amount and one with nothing to count look the same. An action with no quantity under a bounded delegation passes `Some(0)`.
+
+`authorise` returns `RemainingObligations` for what only the relying party can do:
+
+- **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`. `Delegation::id` gives you a stable key for it. It is one id per distinct signed statement. Signing is deterministic, so a principal that signs identical terms twice gets the same id and one shared total; to give a separate budget, change a term such as `not_before`.
+- **Human approval.** Above `approval_required_above`, hold the request until the **principal** approves it. Compute your own digest of the request; the principal signs it with `Holder::approve`, and `check_approval` verifies that step-up itself: signed by the principal, over `approval_digest(delegation, request_digest)`, at the delegation's audience, nonce unspent. The approval names this delegation and this request and nothing else.
+
+`RemainingObligations` is `#[must_use]`: a caller that ignores it has left a cap unchecked. `is_clear()` is true only when there is no running total and no approval left to the caller.
 
 ## Binding a login proof to one request
 

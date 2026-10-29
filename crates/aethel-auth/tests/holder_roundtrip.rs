@@ -7,9 +7,9 @@
 //! to agree about the canonical bytes or nothing passes.
 
 use aethel_auth::{
-    authorise, revoke_as_authority, verify_delegation, verify_login, verify_login_for_request,
-    verify_revocation, verify_step_up, verify_succession, AuthStrength, Bounds, Holder,
-    InMemoryNonceStore, VerifyParams,
+    authorise, check_approval, revoke_as_authority, verify_delegation, verify_login,
+    verify_login_for_request, verify_revocation, verify_step_up, verify_succession, AuthError,
+    AuthStrength, Bounds, Holder, InMemoryNonceStore, VerifyParams,
 };
 use aethel_core::signing::Identity;
 
@@ -108,9 +108,12 @@ fn a_principal_delegates_to_an_agent() {
 
     verify_delegation(&delegation, CONSOLE, NOW).expect("round trip");
 
+    let no_revocations: &[Vec<u8>] = &[];
     let obligations = authorise(
         &delegation,
         CONSOLE,
+        &[principal_id.public_key()],
+        no_revocations,
         &agent_id.public_key(),
         b"transfer",
         Some(300),
@@ -121,6 +124,34 @@ fn a_principal_delegates_to_an_agent() {
     assert!(
         obligations.human_approval_required,
         "300 is over the principal's 250 threshold"
+    );
+
+    // The principal approves this request with the holder's builder, and the
+    // relying party's check accepts it. Control: the agent's builder does not.
+    let request = [0x30; 32];
+    let nonces = InMemoryNonceStore::new();
+    let approval = principal.approve(&delegation, &request, [116u8; 32], NOW - 1, 60);
+    block_on(check_approval(
+        &delegation,
+        &approval,
+        params(CONSOLE),
+        &request,
+        &nonces,
+    ))
+    .expect("the principal's approval round trips");
+
+    let by_agent =
+        Holder::new(&agent_id, CONSOLE).approve(&delegation, &request, [117u8; 32], NOW - 1, 60);
+    assert_eq!(
+        block_on(check_approval(
+            &delegation,
+            &by_agent,
+            params(CONSOLE),
+            &request,
+            &nonces,
+        ))
+        .unwrap_err(),
+        AuthError::NotAuthorised
     );
 }
 
