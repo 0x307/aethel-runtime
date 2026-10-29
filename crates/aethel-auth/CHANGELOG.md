@@ -3,7 +3,7 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-10-29
 
 Breaking. The authorisation API now takes what the relying party knows,
 instead of leaving it to documentation. Each change closes a finding from
@@ -13,6 +13,11 @@ These changes skip the deprecation cycle, under the security exception in
 STABILITY.md §3: a deprecated `check_approval` that still accepted a
 hand-built approval, or an `authorise` that still ignored revocation, would
 keep the defects working for another minor.
+
+**Support window.** This release opens the 0.1 line's security window: 0.1
+gets security fixes until 2027-04-29, then is unsupported. The 0.1 defects
+fixed here are API-shape issues that cannot be patched in 0.1 without this
+same break, so a 0.1 user's fix is to move to 0.2.
 
 ### Changed
 
