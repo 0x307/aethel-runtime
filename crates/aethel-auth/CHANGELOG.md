@@ -9,6 +9,11 @@ Breaking. The authorisation API now takes what the relying party knows,
 instead of leaving it to documentation. Each change closes a finding from
 the October internal audit of 0.1.0.
 
+These changes skip the deprecation cycle, under the security exception in
+STABILITY.md §3: a deprecated `check_approval` that still accepted a
+hand-built approval, or an `authorise` that still ignored revocation, would
+keep the defects working for another minor.
+
 ### Changed
 
 - **`authorise` takes the principals the relying party recognises.** A

@@ -72,6 +72,12 @@ Nothing is deleted without a deprecation cycle first:
 One minor version is a floor, not a target — a deprecation with a non-obvious migration gets
 more notice.
 
+**Security exception.** When an item cannot be kept working through a deprecation cycle without
+keeping a security defect working, it may be changed or removed in the next minor release
+with no cycle. The changelog entry names the defect and carries the migration note §4
+requires, and the affected versions are reported like any security fix (§5, version policy).
+This is for defects in the item's own contract, not a shortcut for ordinary cleanup.
+
 ## 4. Every breaking change gets a changelog entry with a migration note
 
 Not just "breaking: renamed `foo` to `bar`" — a migration note means you can read the entry
@@ -139,4 +145,5 @@ Per §3, tracked here until each item's removal ships (and called out again in
 
 ### `aethel-auth`
 
-None. First published as 0.1.0.
+None. 0.2.0 changed `authorise` and `check_approval` without a deprecation cycle, under the
+§3 security exception; see its `CHANGELOG.md` entry.
