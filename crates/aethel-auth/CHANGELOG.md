@@ -3,7 +3,63 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] - Unreleased
+## [0.2.0] - Unreleased
+
+Breaking. The authorisation API now takes what the relying party knows,
+instead of leaving it to documentation. Each change closes a finding from
+the October internal audit of 0.1.0.
+
+These changes skip the deprecation cycle, under the security exception in
+STABILITY.md §3: a deprecated `check_approval` that still accepted a
+hand-built approval, or an `authorise` that still ignored revocation, would
+keep the defects working for another minor.
+
+### Changed
+
+- **`authorise` takes the principals the relying party recognises.** A
+  delegation is signed by its own principal, so in 0.1.0 a delegation made by
+  any key authorised its agent. It now takes `principals: &[Vec<u8>]` and
+  refuses any other principal with `AuthError::NotAuthorised`. An empty set
+  recognises nobody.
+- **`authorise` takes the relying party's revocations.** A new `RevokedKeys`
+  trait, implemented for a slice of keys, `HashSet` and `BTreeSet` of keys,
+  and any `Fn(&[u8]) -> bool`. A delegation whose principal or delegate key is
+  revoked is refused with the new `AuthError::Revoked`.
+- **`amount: None` is refused under a delegation that sets any amount bound**
+  (`max_per_invocation`, `max_total` or `approval_required_above`). In 0.1.0
+  it skipped the ceiling and the approval check. An action with no quantity
+  passes `Some(0)`. `None` is still accepted under a delegation with no amount
+  bound.
+- **`check_approval` verifies the approval itself.** It takes the principal's
+  `StepUpProof`, the verifier's parameters, the relying party's digest of the
+  request and the nonce store, and is `async`. The step-up must be signed by
+  the delegation's principal over `approval_digest(delegation,
+  request_digest)`, which folds in `Delegation::id`. In 0.1.0 it took an
+  `AuthenticatedIdentity`, which has public fields and could be built by hand,
+  and one approval passed for any delegation from the same principal.
+- **`RemainingObligations` is `#[must_use]`**, and `is_clear()` no longer
+  leaves revocation implied: both of its remaining duties are in the struct.
+
+### Added
+
+- `approval_digest` and `Holder::approve`, which builds the principal's
+  approval of one request under one delegation.
+- `RevokedKeys` and `AuthError::Revoked`.
+
+### Migrating from 0.1
+
+- `authorise(d, aud, delegate, action, amount, now)` becomes
+  `authorise(d, aud, &principals, &revoked, delegate, action, amount, now)`.
+  A relying party with no revocations yet passes `&[] as &[Vec<u8>]`.
+- Pass `Some(0)`, not `None`, for a quantity-free action under a bounded
+  delegation.
+- Replace `verify_step_up` then `check_approval(d, &identity)` with
+  `check_approval(d, &step_up, params, &request_digest, &nonces).await`, and
+  have the principal sign with `Holder::approve` (or sign
+  `approval_digest(d, &request_digest)` as the step-up's `action_digest`). A
+  0.1.0-style step-up over the bare request digest is refused.
+
+## [0.1.0] - 2026-10-26
 
 First release. The authority layer for agents: an agent proves control of its
 key on every request, and presents a delegation from its principal that bounds

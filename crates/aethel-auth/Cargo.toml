@@ -1,6 +1,6 @@
 [package]
 name = "aethel-auth"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.87"
 description = "Delegated authority for post-quantum agent identities: per-request login proofs, bounded delegation, step-up approval, and succession and revocation statements over aethel-core's ML-DSA-65 identities. Verifier-first: the default build is verification only, with no WASM runtime, wallet or classical asymmetric crypto."

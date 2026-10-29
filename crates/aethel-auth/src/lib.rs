@@ -63,8 +63,10 @@
 //! # Status
 //!
 //! Built: the login proof (with optional request binding), step-up,
-//! delegation, and succession and revocation statements, with builders for
-//! all of them behind the `holder` feature.
+//! delegation (checked against the relying party's principals and
+//! revocations), approval of one request under one delegation, and
+//! succession and revocation statements, with builders for all of them
+//! behind the `holder` feature.
 
 // No unsafe code, tests included. Test executors use `Waker::noop()`.
 #![forbid(unsafe_code)]
@@ -95,7 +97,8 @@ pub mod proof;
 pub mod statements;
 
 pub use delegation::{
-    authorise, check_approval, verify_delegation, Bounds, Delegation, RemainingObligations,
+    approval_digest, authorise, check_approval, verify_delegation, Bounds, Delegation,
+    RemainingObligations, RevokedKeys,
 };
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]

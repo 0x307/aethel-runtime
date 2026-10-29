@@ -151,6 +151,30 @@ impl<'a> Holder<'a> {
         proof
     }
 
+    /// As a delegation's principal, approve one request its delegate made.
+    ///
+    /// `request_digest` is the relying party's digest of the request being
+    /// approved, the same one it will pass to [`crate::check_approval`]. The
+    /// step-up signs [`crate::approval_digest`] over it and the delegation's
+    /// id, so it approves this request under this delegation and nothing
+    /// else. As with [`Holder::step_up`], show the holder what it is
+    /// approving before signing.
+    pub fn approve(
+        &self,
+        delegation: &Delegation,
+        request_digest: &[u8; 32],
+        nonce: [u8; 32],
+        issued_at: u64,
+        valid_for_secs: u64,
+    ) -> StepUpProof {
+        self.step_up(
+            nonce,
+            issued_at,
+            valid_for_secs,
+            crate::approval_digest(delegation, request_digest),
+        )
+    }
+
     /// Grant `delegate_key` bounded authority to act at this audience.
     ///
     /// The delegate needs its own per-relying-party identity too. If an agent
