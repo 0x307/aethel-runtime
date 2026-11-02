@@ -37,10 +37,12 @@
 
 use aethel_core::signing::Identity;
 
+use crate::approval::Approval;
 use crate::delegation::{Bounds, Delegation};
 use crate::proof::{LoginProof, StepUpProof};
 use crate::purposes::{
-    AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
+    AUTH_APPROVAL_V1, AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1,
+    AUTH_SUCCESSION_V1,
 };
 use crate::statements::{Revocation, RevokedBy, Succession};
 
@@ -153,26 +155,36 @@ impl<'a> Holder<'a> {
 
     /// As a delegation's principal, approve one request its delegate made.
     ///
-    /// `request_digest` is the relying party's digest of the request being
-    /// approved, the same one it will pass to [`crate::check_approval`]. The
-    /// step-up signs [`crate::approval_digest`] over it and the delegation's
-    /// id, so it approves this request under this delegation and nothing
-    /// else. As with [`Holder::step_up`], show the holder what it is
-    /// approving before signing.
+    /// Signs an [`Approval`] under `AUTH_APPROVAL_V1` naming this delegation,
+    /// the relying party's `request_digest`, the `action` and the exact
+    /// `amount`, which is what [`crate::check_approval`] compares against. Show
+    /// the holder those values (and the audience) before signing: they are in
+    /// the clear so that a holder can.
+    #[allow(clippy::too_many_arguments)]
     pub fn approve(
         &self,
         delegation: &Delegation,
         request_digest: &[u8; 32],
+        action: &[u8],
+        amount: u128,
         nonce: [u8; 32],
         issued_at: u64,
         valid_for_secs: u64,
-    ) -> StepUpProof {
-        self.step_up(
+    ) -> Approval {
+        let mut approval = Approval {
+            principal_key: self.public_key(),
+            audience: self.audience.clone(),
+            delegation_id: delegation.id(),
+            request_digest: *request_digest,
+            action: action.to_vec(),
+            amount,
             nonce,
             issued_at,
-            valid_for_secs,
-            crate::approval_digest(delegation, request_digest),
-        )
+            expires_at: issued_at.saturating_add(valid_for_secs),
+            signature: Vec::new(),
+        };
+        approval.signature = self.sign(AUTH_APPROVAL_V1, &approval.signing_input());
+        approval
     }
 
     /// Grant `delegate_key` bounded authority to act at this audience.

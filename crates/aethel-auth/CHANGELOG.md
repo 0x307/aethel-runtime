@@ -3,6 +3,80 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - Unreleased
+
+Breaking. The principal's approval becomes its own signed statement, and the
+nonce store's keys and retention change. Each change closes a finding from the
+2026-10-30 internal blind review of 0.2.0's approval.
+
+These changes skip the deprecation cycle, under the security exception in
+STABILITY.md §3: a deprecated 0.2 `check_approval` would keep accepting any
+step-up from the owner over the right bytes as an approval.
+
+**Support window.** This release opens the 0.2 line's security window: 0.2 gets
+security fixes until 2027-05-31, then is unsupported. The 0.2 approval cannot
+be fixed without this break, so a 0.2 user who relies on approvals moves to
+0.3.
+
+### Changed
+
+- **An approval is its own statement**, `Approval`, signed under the new
+  purpose `aethel-auth/approval/v1`. In 0.2 it was a step-up whose digest
+  happened to be `approval_digest(delegation, request)`, so any owner step-up
+  over bytes someone else chose was an approval, and the owner's software
+  could not tell the two apart. A step-up signature now never verifies as an
+  approval.
+- **The approval names what it approves, in the clear:** the audience, the
+  delegation id, the relying party's request digest, the action and the exact
+  amount. An approval at one amount is refused at another. `approval_digest`
+  is removed.
+- **`check_approval` checks the delegation as well.** It now takes the
+  principals the relying party recognises and its revoked keys, like
+  `authorise`, and verifies the delegation's signature and window at the time
+  of the approval. An approval that arrives after the delegation expired or a
+  key was revoked is refused.
+- **Nonces are claimed per (purpose, signer).** The key given to `NonceStore`
+  is a hash of the purpose, the signer's key and the nonce, so an agent can no
+  longer spend its owner's approval nonce in a login of its own. The trait is
+  unchanged; existing stores keep working, and entries written by 0.2 stay
+  until they expire.
+- **Nonce retention depends only on the proof.** A nonce is kept until the
+  earlier of the proof's expiry and `issued_at + MAX_AGE_CEILING_SECS`
+  (3,600 s), plus `NONCE_SKEW_SECS` (300 s). In 0.2 it followed each caller's
+  `max_age_secs` with a one-second margin, so two instances with different
+  settings, or a lagging clock, let one proof be used twice. A
+  `max_age_secs` above the ceiling is clamped to it.
+- **`Bounds::approval_required_above` is documented as it behaves:** `None`
+  means no request needs approval, and the threshold applies per request. The
+  struct doc said every `None` field grants nothing.
+- **This crate defines its own new purposes** under the `aethel-auth/` prefix
+  it owns, instead of registering each in `aethel-core` first. The five
+  existing purposes are unchanged and still re-exported from `aethel-core`.
+
+### Added
+
+- `Approval`, `Holder::approve(delegation, request_digest, action, amount,
+  nonce, issued_at, valid_for_secs)` and `purposes::AUTH_APPROVAL_V1`.
+- `retired_key`: verifies a succession and returns the outgoing key, for the
+  relying party's revoked set. After a succession the old key no longer
+  approves or authorises once that key is in the set.
+- `MAX_AGE_CEILING_SECS` and `NONCE_SKEW_SECS`.
+
+### Migrating from 0.2
+
+- The principal signs `Holder::approve(&d, &request_digest, action, amount,
+  nonce, issued_at, valid_for)` instead of `Holder::approve(&d,
+  &request_digest, nonce, issued_at, valid_for)`. A wallet shows the action,
+  amount, audience and delegation before signing.
+- `check_approval(&d, &step_up, params, &request_digest, &nonces)` becomes
+  `check_approval(&d, &approval, params, &principals, &revoked,
+  &request_digest, action, amount, &nonces)`, with the same `principals` and
+  `revoked` you pass to `authorise`.
+- Nothing to change in a `NonceStore` implementation. Expect entries to live
+  up to `MAX_AGE_CEILING_SECS + NONCE_SKEW_SECS` after a proof is issued.
+- After verifying a succession, add `retired_key(&s, audience)?` to your
+  revoked set.
+
 ## [0.2.0] - 2026-10-29
 
 Breaking. The authorisation API now takes what the relying party knows,

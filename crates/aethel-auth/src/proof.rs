@@ -238,7 +238,7 @@ pub(crate) fn check_envelope(
     if issued_at > params.now {
         return Err(AuthError::StaleOrFutureProof);
     }
-    if params.now.saturating_sub(issued_at) > params.max_age_secs {
+    if params.now.saturating_sub(issued_at) > params.max_age_secs.min(MAX_AGE_CEILING_SECS) {
         return Err(AuthError::StaleOrFutureProof);
     }
     if expires_at <= params.now {
@@ -247,19 +247,74 @@ pub(crate) fn check_envelope(
     Ok(())
 }
 
+/// The oldest `issued_at` any verifier using this crate accepts, in seconds,
+/// whatever `max_age_secs` it passes. A larger `max_age_secs` is clamped to
+/// this.
+///
+/// It exists so that how long a nonce must be remembered depends only on the
+/// proof, never on which verifier saw it first. Without it, an instance
+/// checking with a short `max_age_secs` would let the store forget a nonce that
+/// an instance with a longer one still accepts.
+pub const MAX_AGE_CEILING_SECS: u64 = 3_600;
+
+/// How far, in seconds, the verifier's clock may lag the nonce store's clock
+/// (or another verifier's) without reopening a replay window.
+///
+/// A nonce is kept this much longer than the last second any verifier could
+/// accept its proof. Instances whose clocks drift further apart than this need
+/// their clocks fixed, not a longer margin.
+pub const NONCE_SKEW_SECS: u64 = 300;
+
 /// How long a nonce store must remember a claimed nonce.
 ///
-/// A proof is accepted only while it is unexpired **and** no older than
-/// `max_age_secs`, so the nonce has to be remembered until the earlier of the
-/// two, and no longer. Using `expires_at` alone would let a holder that picked
-/// a far-future expiry keep a store entry alive indefinitely. The `+ 1` covers
-/// the last second at which [`check_envelope`] still accepts the proof.
-pub(crate) fn nonce_retention(issued_at: u64, expires_at: u64, params: &VerifyParams<'_>) -> u64 {
-    expires_at.min(
-        issued_at
-            .saturating_add(params.max_age_secs)
-            .saturating_add(1),
-    )
+/// A proof is accepted only while it is unexpired **and** no older than the
+/// verifier's `max_age_secs`, which is at most [`MAX_AGE_CEILING_SECS`]. So
+/// every verifier has stopped accepting it by the earlier of `expires_at` and
+/// `issued_at + MAX_AGE_CEILING_SECS`. The nonce is kept until then plus
+/// [`NONCE_SKEW_SECS`], computed from the proof alone: two instances with
+/// different `max_age_secs`, or with clocks up to the skew apart, retain the
+/// same nonce for the same time.
+pub(crate) fn nonce_retention(issued_at: u64, expires_at: u64) -> u64 {
+    expires_at
+        .min(issued_at.saturating_add(MAX_AGE_CEILING_SECS))
+        .saturating_add(NONCE_SKEW_SECS)
+}
+
+/// The key a nonce is claimed under: the statement's purpose, the signer's
+/// key and the nonce, hashed together.
+///
+/// One namespace per (purpose, signer), so a party cannot spend someone
+/// else's nonce by reusing it in a statement of its own (an agent copying the
+/// owner's approval nonce into its own login), while a true replay, the same
+/// signer and purpose and nonce, still collides.
+pub(crate) fn nonce_key(purpose: &[u8], public_key: &[u8], nonce: &[u8; 32]) -> [u8; 32] {
+    let mut input = Vec::with_capacity(64 + purpose.len() + public_key.len());
+    push_len_prefixed(&mut input, b"aethel-auth/nonce-key/v1");
+    push_len_prefixed(&mut input, purpose);
+    push_len_prefixed(&mut input, public_key);
+    push_len_prefixed(&mut input, nonce);
+    shake256_32(&input)
+}
+
+/// Claim a statement's nonce in the caller's store, under [`nonce_key`] and
+/// for [`nonce_retention`].
+pub(crate) async fn claim_nonce<N: NonceStore>(
+    nonces: &N,
+    purpose: &[u8],
+    public_key: &[u8],
+    nonce: &[u8; 32],
+    issued_at: u64,
+    expires_at: u64,
+) -> Result<(), AuthError> {
+    let key = nonce_key(purpose, public_key, nonce);
+    if nonces
+        .claim(&key, nonce_retention(issued_at, expires_at))
+        .await?
+    {
+        Ok(())
+    } else {
+        Err(AuthError::NonceAlreadyUsed)
+    }
 }
 
 /// A short, human-comparable name for a public key.
@@ -299,7 +354,8 @@ pub struct VerifyParams<'a> {
     pub now: u64,
     /// How far back the verifier will accept an `issued_at`. This is the
     /// clamp on a client-chosen window: without it a holder could mint a proof
-    /// valid for a year.
+    /// valid for a year. Values above [`MAX_AGE_CEILING_SECS`] are treated as
+    /// that ceiling.
     pub max_age_secs: u64,
 }
 
@@ -391,15 +447,15 @@ async fn verify_login_inner<N: NonceStore>(
         return Err(AuthError::BadSignature);
     }
 
-    if !nonces
-        .claim(
-            &proof.nonce,
-            nonce_retention(proof.issued_at, proof.expires_at, &params),
-        )
-        .await?
-    {
-        return Err(AuthError::NonceAlreadyUsed);
-    }
+    claim_nonce(
+        nonces,
+        AUTH_LOGIN_V1,
+        &proof.public_key,
+        &proof.nonce,
+        proof.issued_at,
+        proof.expires_at,
+    )
+    .await?;
 
     Ok(AuthenticatedIdentity {
         public_key: proof.public_key.clone(),
@@ -518,15 +574,15 @@ pub async fn verify_step_up<N: NonceStore>(
         return Err(AuthError::BadSignature);
     }
 
-    if !nonces
-        .claim(
-            &proof.nonce,
-            nonce_retention(proof.issued_at, proof.expires_at, &params),
-        )
-        .await?
-    {
-        return Err(AuthError::NonceAlreadyUsed);
-    }
+    claim_nonce(
+        nonces,
+        AUTH_STEP_UP_V1,
+        &proof.public_key,
+        &proof.nonce,
+        proof.issued_at,
+        proof.expires_at,
+    )
+    .await?;
 
     Ok(AuthenticatedIdentity {
         public_key: proof.public_key.clone(),

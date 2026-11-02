@@ -16,8 +16,9 @@
 //!    ([`verify_login_for_request`]).
 //! 2. **Authorise each request**: check that a [`Delegation`] from a
 //!    principal covers what its delegate is attempting.
-//! 3. **Step up**: re-prove for one sensitive action, which is how a
-//!    principal approves a request above its own threshold.
+//! 3. **Step up and approve**: re-prove control for one sensitive action
+//!    ([`StepUpProof`]), and, separately, the principal's [`Approval`] of a
+//!    request above its own threshold.
 //! 4. **End**: expiry, revocation, succession.
 //!
 //! Jobs 2 through 4 live here, for an agent that proves itself on every
@@ -85,6 +86,7 @@ compile_error!(
      A no_std build waits on aethel-core building without a cdylib."
 );
 
+pub mod approval;
 #[cfg(feature = "serde")]
 mod b64;
 pub mod delegation;
@@ -96,9 +98,9 @@ pub mod nonce;
 pub mod proof;
 pub mod statements;
 
+pub use approval::{check_approval, Approval};
 pub use delegation::{
-    approval_digest, authorise, check_approval, verify_delegation, Bounds, Delegation,
-    RemainingObligations, RevokedKeys,
+    authorise, verify_delegation, Bounds, Delegation, RemainingObligations, RevokedKeys,
 };
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]
@@ -107,8 +109,11 @@ pub use nonce::{InMemoryNonceStore, NonceStore};
 pub use proof::{
     key_fingerprint, verify_login, verify_login_for_request, verify_step_up, AuthMethod,
     AuthStrength, AuthenticatedIdentity, LoginProof, StepUpProof, VerifyParams,
+    MAX_AGE_CEILING_SECS, NONCE_SKEW_SECS,
 };
-pub use statements::{verify_revocation, verify_succession, Revocation, RevokedBy, Succession};
+pub use statements::{
+    retired_key, verify_revocation, verify_succession, Revocation, RevokedBy, Succession,
+};
 
 /// Re-exported so consumers verify under the same registry entries this crate
 /// signs under, rather than defining their own bytes.
@@ -118,16 +123,28 @@ pub use statements::{verify_revocation, verify_succession, Revocation, RevokedBy
 /// there, the way `aethel-vault`'s are.
 pub use aethel_core::signing::purpose;
 
-/// This crate's own entries in that registry, named locally so a caller does
-/// not have to know they live upstream.
+/// This crate's purposes, all under the `aethel-auth/` prefix this crate owns.
 ///
 /// Each statement type gets its own purpose and never borrows another's. That
 /// is what makes a signature for one statement structurally unusable as
 /// another, rather than a rule callers have to remember.
+///
+/// The first five were registered in `aethel-core`'s registry and are
+/// re-exported from it, unchanged. New ones are defined here: a crate owns the
+/// purposes under its own prefix, so adding a statement type does not need an
+/// `aethel-core` release. The purpose is the ML-DSA context, so the
+/// separation holds wherever the constant is defined; what keeps it is that no
+/// two statement types anywhere share bytes, which the prefix and this
+/// crate's own tests guarantee.
 pub mod purposes {
     pub use aethel_core::signing::purpose::{
         AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
     };
+
+    /// A principal's [`crate::Approval`] of one request under one
+    /// delegation. Distinct from [`AUTH_STEP_UP_V1`], so a general
+    /// "confirm it's you" step-up can never stand in for an approval.
+    pub const AUTH_APPROVAL_V1: &[u8] = b"aethel-auth/approval/v1";
 }
 
 #[cfg(test)]
@@ -344,7 +361,27 @@ version = \"0.13\"
             AUTH_SUCCESSION_V1,
             AUTH_REVOCATION_V1,
             AUTH_DELEGATION_V1,
+            AUTH_APPROVAL_V1,
         ];
+
+        // A purpose defined here must not repeat any registered in aethel-core
+        // under another name (the vault's included), or two statement types
+        // would share a context.
+        for (name, registered) in aethel_core::signing::purpose::ALL {
+            if !name.starts_with("AUTH_") {
+                assert_ne!(
+                    *registered, AUTH_APPROVAL_V1,
+                    "AUTH_APPROVAL_V1 collides with {name}"
+                );
+            }
+        }
+        assert!(
+            !aethel_core::signing::purpose::ALL
+                .iter()
+                .any(|(_, b)| *b == AUTH_APPROVAL_V1),
+            "AUTH_APPROVAL_V1 is not in aethel-core's registry; if it is added there, \
+             re-export it instead of defining it here"
+        );
 
         for (i, a) in all.iter().enumerate() {
             assert!(

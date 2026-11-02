@@ -71,8 +71,7 @@
 use aethel_core::signing::verify_with_purpose;
 
 use crate::error::AuthError;
-use crate::nonce::NonceStore;
-use crate::proof::{push_len_prefixed, shake256_32, verify_step_up, StepUpProof, VerifyParams};
+use crate::proof::{push_len_prefixed, shake256_32};
 use crate::purposes::AUTH_DELEGATION_V1;
 
 /// The keys this relying party has seen a verified revocation for.
@@ -119,9 +118,11 @@ impl RevokedKeys for std::collections::BTreeSet<Vec<u8>> {
 
 /// What a delegate is permitted to do.
 ///
-/// Every field is a *ceiling*. An empty or `None` field grants nothing rather
-/// than everything: a delegation that failed to say what it allowed should
-/// authorise nothing, not all of it.
+/// `actions`, `max_per_invocation`, `max_total` and `window_secs` are
+/// *ceilings*: an empty or `None` one grants nothing rather than everything, so
+/// a delegation that failed to say what it allowed authorises nothing, not all
+/// of it. `approval_required_above` is the exception: it is a condition, not a
+/// grant, and `None` means no request needs approval (see its doc).
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bounds {
@@ -140,8 +141,17 @@ pub struct Bounds {
     pub max_total: Option<u128>,
     /// The window `max_total` applies over.
     pub window_secs: Option<u64>,
-    /// Above this, the relying party must obtain a human approval before
-    /// proceeding. The vault's `hitl_above`, generalised.
+    /// Above this amount, a request needs the principal's [`crate::Approval`]
+    /// before the relying party proceeds. The vault's `hitl_above`,
+    /// generalised.
+    ///
+    /// **`None` means no request ever needs approval.** It is not a ceiling,
+    /// so it does not follow the "`None` grants nothing" rule above; a
+    /// principal who wants every request approved sets `Some(0)`.
+    ///
+    /// The threshold applies to each request on its own. Requests just under
+    /// it need no approval however many there are, so a principal who cares
+    /// about the sum sets `max_total` (and `window_secs`) as well.
     pub approval_required_above: Option<u128>,
 }
 
@@ -278,8 +288,9 @@ pub struct RemainingObligations {
     /// The window the ceiling applies over.
     pub window_secs: Option<u64>,
     /// This invocation is above the principal's approval threshold. Do not
-    /// proceed until the **principal** has signed a step-up approving this
-    /// request under this delegation, and [`check_approval`] has accepted it.
+    /// proceed until the **principal** has signed an [`crate::Approval`] of this
+    /// request under this delegation, and [`crate::check_approval`] has
+    /// accepted it.
     pub human_approval_required: bool,
 }
 
@@ -414,58 +425,4 @@ pub fn authorise<R: RevokedKeys + ?Sized>(
         window_secs: delegation.bounds.window_secs,
         human_approval_required,
     })
-}
-
-/// The digest a principal signs, as a step-up's `action_digest`, to approve
-/// one request under one delegation.
-///
-/// `SHAKE-256` over a domain label, [`Delegation::id`] and `request_digest`,
-/// each length-prefixed. `request_digest` is the relying party's own digest
-/// of the request being approved (its action, its amount and anything else it
-/// relies on), computed from the request it received, never taken from the
-/// client. Folding the delegation id in means an approval for a request under
-/// one delegation does not approve a request under another.
-///
-/// The holder builds the step-up with `Holder::approve`, which calls this.
-pub fn approval_digest(delegation: &Delegation, request_digest: &[u8; 32]) -> [u8; 32] {
-    let mut input = Vec::with_capacity(96);
-    push_len_prefixed(&mut input, b"aethel-auth/approval/v1");
-    push_len_prefixed(&mut input, &delegation.id());
-    push_len_prefixed(&mut input, request_digest);
-    shake256_32(&input)
-}
-
-/// Verify the principal's approval of one request under this delegation, and
-/// spend its nonce.
-///
-/// Verifies `step_up` itself rather than accepting the result of an earlier
-/// verification. The step-up must be signed by the delegation's
-/// **principal**, at the delegation's audience, over
-/// [`approval_digest`]`(delegation, request_digest)`. So the approval names
-/// this delegation and this request, and nothing short of the principal's
-/// signature passes.
-///
-/// `request_digest` is computed by the relying party from the request it is
-/// about to perform, the same way the holder computed it before signing.
-///
-/// Refuses a step-up from the delegate (the agent approving its own request)
-/// or any other key, one for another request or another delegation, one for
-/// another audience, and a replay. `params.expected_audience` must be the
-/// delegation's audience.
-pub async fn check_approval<N: NonceStore>(
-    delegation: &Delegation,
-    step_up: &StepUpProof,
-    params: VerifyParams<'_>,
-    request_digest: &[u8; 32],
-    nonces: &N,
-) -> Result<(), AuthError> {
-    if params.expected_audience != delegation.audience.as_slice() {
-        return Err(AuthError::AudienceMismatch);
-    }
-    if step_up.public_key != delegation.principal_key {
-        return Err(AuthError::NotAuthorised);
-    }
-    let expected = approval_digest(delegation, request_digest);
-    verify_step_up(step_up, params, &expected, nonces).await?;
-    Ok(())
 }
