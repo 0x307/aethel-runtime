@@ -37,10 +37,11 @@ This project ships `0.x`. Security fixes land on the latest published minor vers
 ## What `aethel-auth` does and does not protect
 
 - **It checks statements; the relying party holds the state.** `authorise` verifies a
-  delegation and checks one request against its bounds. It does not keep the running total
-  over `window_secs`, the set of revoked keys, or the record of a human approval. It returns
-  those as `RemainingObligations`, and a relying party that ignores them has left a cap
-  unchecked.
+  delegation and checks one request against its bounds, against the principals and revoked
+  keys the relying party passes in. It does not keep the running total over `window_secs` or
+  hold a request for the principal's approval. It returns those as `RemainingObligations`,
+  and a relying party that ignores them has left a cap unchecked. The relying party also
+  keeps its own list of principals and verified revocations.
 - **Replay protection is only as good as the nonce store.** `NonceStore::claim` must be atomic
   and shared by every instance that verifies for one audience, and it must survive restarts:
   a forgotten nonce is a replay window for as long as the proof is valid.

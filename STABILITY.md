@@ -145,5 +145,6 @@ Per §3, tracked here until each item's removal ships (and called out again in
 
 ### `aethel-auth`
 
-None. 0.2.0 changed `authorise` and `check_approval` without a deprecation cycle, under the
-§3 security exception; see its `CHANGELOG.md` entry.
+None. 0.2.0 changed `authorise` and `check_approval`, and 0.3.0 replaced the approval and
+`approval_digest`, without a deprecation cycle, under the §3 security exception; see each
+release's `CHANGELOG.md` entry.

@@ -130,29 +130,41 @@ fn a_principal_delegates_to_an_agent() {
     // relying party's check accepts it. Control: the agent's builder does not.
     let request = [0x30; 32];
     let nonces = InMemoryNonceStore::new();
-    let approval = principal.approve(&delegation, &request, [116u8; 32], NOW - 1, 60);
-    block_on(check_approval(
+    let approval = principal.approve(
         &delegation,
-        &approval,
-        params(CONSOLE),
         &request,
-        &nonces,
-    ))
-    .expect("the principal's approval round trips");
-
-    let by_agent =
-        Holder::new(&agent_id, CONSOLE).approve(&delegation, &request, [117u8; 32], NOW - 1, 60);
-    assert_eq!(
+        b"transfer",
+        300,
+        [116u8; 32],
+        NOW - 1,
+        60,
+    );
+    let principals = [principal_id.public_key()];
+    let check = |a| {
         block_on(check_approval(
             &delegation,
-            &by_agent,
+            a,
             params(CONSOLE),
+            &principals,
+            no_revocations,
             &request,
+            b"transfer",
+            300,
             &nonces,
         ))
-        .unwrap_err(),
-        AuthError::NotAuthorised
+    };
+    check(&approval).expect("the principal's approval round trips");
+
+    let by_agent = Holder::new(&agent_id, CONSOLE).approve(
+        &delegation,
+        &request,
+        b"transfer",
+        300,
+        [117u8; 32],
+        NOW - 1,
+        60,
     );
+    assert_eq!(check(&by_agent).unwrap_err(), AuthError::NotAuthorised);
 }
 
 /// Pins the `Delegation::id` doc: signing is deterministic, so identical

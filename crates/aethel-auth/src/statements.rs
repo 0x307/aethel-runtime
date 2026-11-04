@@ -248,3 +248,19 @@ pub fn verify_succession(
 
     Ok(())
 }
+
+/// Verify a succession and return the key it retires.
+///
+/// After a succession the outgoing key must stop acting at this relying
+/// party: put the returned key in the set you pass to [`crate::authorise`] and
+/// [`crate::check_approval`] as `revoked`. Until you do, the old key still
+/// approves under the delegations it signed, and the successor cannot (they
+/// name the old key as principal), so the principal re-delegates from the new
+/// key.
+pub fn retired_key(
+    succession: &Succession,
+    expected_audience: &[u8],
+) -> Result<Vec<u8>, AuthError> {
+    verify_succession(succession, expected_audience)?;
+    Ok(succession.from_key.clone())
+}

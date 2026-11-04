@@ -5,7 +5,7 @@
 
 use aethel_auth::{
     purposes, verify_login, verify_login_for_request, AuthError, AuthStrength, InMemoryNonceStore,
-    LoginProof, NonceStore, StoreError, VerifyParams,
+    LoginProof, NonceStore, StoreError, VerifyParams, MAX_AGE_CEILING_SECS, NONCE_SKEW_SECS,
 };
 use aethel_core::signing::Identity;
 
@@ -265,11 +265,13 @@ impl NonceStore for RecordingStore {
 }
 
 /// A holder that picks a far-future expiry must not make the verifier's
-/// store remember its nonce for that long: the proof stops being accepted
-/// after `max_age_secs`, so that is the most the store needs. A proof with an
-/// ordinary expiry keeps it, which is the control.
+/// store remember its nonce for that long: no verifier accepts a proof older
+/// than `MAX_AGE_CEILING_SECS`, so that plus the skew margin is the most the
+/// store needs. A proof with an ordinary expiry keeps its own expiry plus the
+/// margin, which is the control. Neither depends on the caller's
+/// `max_age_secs`.
 #[test]
-fn nonce_retention_is_bounded_by_the_verifiers_max_age() {
+fn nonce_retention_is_bounded_by_the_age_ceiling_plus_skew() {
     let id = identity(70);
 
     let store = RecordingStore(std::sync::Mutex::new(Vec::new()));
@@ -282,8 +284,11 @@ fn nonce_retention_is_bounded_by_the_verifiers_max_age() {
     let recorded = store.0.lock().unwrap().clone();
     assert_eq!(
         recorded,
-        vec![NOW + MAX_AGE + 1, NOW + 30],
-        "retention is the earlier of expiry and the max-age clamp"
+        vec![
+            NOW + MAX_AGE_CEILING_SECS + NONCE_SKEW_SECS,
+            NOW + 30 + NONCE_SKEW_SECS
+        ],
+        "retention is the earlier of expiry and the age ceiling, plus the skew margin"
     );
 }
 

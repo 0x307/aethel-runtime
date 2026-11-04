@@ -8,7 +8,7 @@ Delegated authority for post-quantum agent identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: 0.2.0.** Per-request login proof (optionally bound to one request), bounded delegation, step-up approval, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
+> **Status: 0.3.0.** Per-request login proof (optionally bound to one request), bounded delegation, the principal's approval of one request, step-up, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
 
 ## What a service hosts, and what an agent holds
 
@@ -48,7 +48,7 @@ Plain `rlib`, deliberately. A server-side verifier has no use for a `cdylib`, an
 
 ## Purpose bytes
 
-This crate registers its purposes in `aethel-core`'s central registry rather than defining its own, the way `aethel-vault` does. The convention is `<crate>/<thing>/v<n>`, passed as a FIPS 204 context. See `aethel-core/docs/PURPOSES.md`.
+Every statement type has its own purpose, `aethel-auth/<thing>/v<n>`, passed to ML-DSA as its FIPS 204 context, so a signature for one statement type never verifies as another. This crate owns the `aethel-auth/` prefix. The first five purposes (login, step-up, delegation, revocation, succession) were registered in `aethel-core`'s registry and are re-exported from it unchanged; newer ones, starting with `aethel-auth/approval/v1`, are defined here in `purposes`, so a new statement type does not need an `aethel-core` release. A test checks that this crate's purposes are distinct, stay under its prefix, and repeat nothing in `aethel-core`'s registry.
 
 ## Two constraints this crate is built under
 
@@ -68,7 +68,8 @@ An amount is required under a delegation that sets any amount bound. `None` ther
 `authorise` returns `RemainingObligations` for what only the relying party can do:
 
 - **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`. `Delegation::id` gives you a stable key for it. It is one id per distinct signed statement. Signing is deterministic, so a principal that signs identical terms twice gets the same id and one shared total; to give a separate budget, change a term such as `not_before`.
-- **Human approval.** Above `approval_required_above`, hold the request until the **principal** approves it. Compute your own digest of the request; the principal signs it with `Holder::approve`, and `check_approval` verifies that step-up itself: signed by the principal, over `approval_digest(delegation, request_digest)`, at the delegation's audience, nonce unspent. The approval names this delegation and this request and nothing else.
+- **Human approval.** Above `approval_required_above`, hold the request until the **principal** approves it. The approval is its own signed statement, an `Approval` under `aethel-auth/approval/v1`, never a step-up. It names, in the clear, the audience, the delegation (`Delegation::id`), your digest of the request, the action and the exact amount, so the principal's software can show each one before signing (`Holder::approve`). `check_approval` checks the delegation again as it stands *now* (signature, window, principal, revocation), then that the approval names exactly the request, action and amount you are about to perform, is signed by the principal, and has an unspent nonce. `approval_required_above: None` means no request needs approval; it applies to each request on its own, so set `max_total` to bound the sum.
+- **Succession.** After a verified succession, put `retired_key(&succession, audience)` in your revoked set, or the old key still approves under its delegations.
 
 `RemainingObligations` is `#[must_use]`: a caller that ignores it has left a cap unchecked. `is_clear()` is true only when there is no running total and no approval left to the caller.
 
@@ -96,6 +97,10 @@ body    the body bytes exactly as sent; an empty body hashes as SHA-256("")
 The host is not in it because the audience is already signed. Headers are not in it; a relying party that relies on a header adds it as a further `lp(..)` field, and the holder must do the same. Compute the digest where the request arrives in the form the holder sent it, before any proxy rewrites the path. SHA-256 is recommended because browsers and HTTP stacks have it built in. The signature covers the 32 bytes either way.
 
 A proof without a digest has the same signed bytes and the same JSON as before the field existed, so every existing proof still verifies. A verifier older than the field refuses a proof that carries one: it checks the signature over bytes without the digest, so it fails closed.
+
+## Nonces and more than one instance
+
+Every proof's nonce is claimed in your `NonceStore` under its purpose and its signer's key, so one party's statement never spends another's nonce. The store keeps a nonce until the earlier of the proof's own expiry and `issued_at + MAX_AGE_CEILING_SECS` (3,600 s; a larger `max_age_secs` is clamped to it), plus `NONCE_SKEW_SECS` (300 s). That depends only on the proof, so instances with different `max_age_secs` agree. Two things are still yours: **every instance at one audience must share one store**, and their clocks must stay within the skew margin of the store's.
 
 ## Wire format: one spelling per value
 

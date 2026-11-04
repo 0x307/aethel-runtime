@@ -37,7 +37,8 @@ pub enum AuthError {
     /// reused a value it should not have.
     NonceAlreadyUsed,
     /// A step-up was signed for a different action than the one being
-    /// attempted, or the action was swapped after the holder consented.
+    /// attempted, or an approval names a different delegation, request,
+    /// action or amount than the one the relying party is about to perform.
     ActionMismatch,
     /// A login proof checked with `verify_login_for_request` had no request
     /// digest, or a digest of a different request.
