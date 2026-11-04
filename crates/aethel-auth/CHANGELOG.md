@@ -3,7 +3,7 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-04
 
 Breaking. The principal's approval becomes its own signed statement, and the
 nonce store's keys and retention change. Each change closes a finding from the
@@ -14,7 +14,7 @@ STABILITY.md §3: a deprecated 0.2 `check_approval` would keep accepting any
 step-up from the owner over the right bytes as an approval.
 
 **Support window.** This release opens the 0.2 line's security window: 0.2 gets
-security fixes until 2027-05-31, then is unsupported. The 0.2 approval cannot
+security fixes until 2027-05-04, then is unsupported. The 0.2 approval cannot
 be fixed without this break, so a 0.2 user who relies on approvals moves to
 0.3.
 
