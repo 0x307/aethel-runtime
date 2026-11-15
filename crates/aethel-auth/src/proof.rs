@@ -361,6 +361,8 @@ pub struct VerifyParams<'a> {
 
 /// Verify a login proof and spend its nonce.
 ///
+/// Does not check revocation: see the README's "Login proofs and revocation".
+///
 /// # Order of checks, and why
 ///
 /// Audience and clock first: they are free, they need no I/O, and they reject
@@ -388,6 +390,8 @@ pub async fn verify_login<N: NonceStore>(
 }
 
 /// Verify a login proof that is bound to one request, and spend its nonce.
+///
+/// Does not check revocation: see the README's "Login proofs and revocation".
 ///
 /// `expected_request_digest` is the relying party's own digest of the request
 /// it received, computed the same way the holder computed it. It must never

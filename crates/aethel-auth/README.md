@@ -8,7 +8,7 @@ Delegated authority for post-quantum agent identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: 0.3.0.** Per-request login proof (optionally bound to one request), bounded delegation, the principal's approval of one request, step-up, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
+> **Status: 0.3.1.** Per-request login proof (optionally bound to one request), bounded delegation, the principal's approval of one request, step-up, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
 
 ## What a service hosts, and what an agent holds
 
@@ -98,6 +98,39 @@ The host is not in it because the audience is already signed. Headers are not in
 
 A proof without a digest has the same signed bytes and the same JSON as before the field existed, so every existing proof still verifies. A verifier older than the field refuses a proof that carries one: it checks the signature over bytes without the digest, so it fails closed.
 
+## Login proofs and revocation
+
+`verify_login` and `verify_login_for_request` take no `RevokedKeys` and do not check revocation. They check the audience, the clock, the signature and the nonce, and that is all. A key that has been revoked still produces a proof that verifies. `authorise` and `check_approval` do check revocation, because they take a `RevokedKeys`.
+
+A relying party that accepts logins therefore checks the proof's signer key against its own revoked set after verifying, or goes through `authorise`. The check, with `revoked` being the set you keep (a slice, a `HashSet<Vec<u8>>`, or a closure over your store):
+
+```rust
+use aethel_auth::{AuthError, RevokedKeys};
+
+let who = verify_login(&proof, params, &nonces).await?;
+if revoked.is_revoked(&who.public_key) {
+    return Err(AuthError::Revoked);
+}
+```
+
+The same two lines follow `verify_login_for_request`. Keys are compared as bytes, as in `authorise`.
+
+## A server challenge
+
+A login proof is built by the client alone, so nothing in it comes from the server. When a relying party wants a login tied to a value it chose, it sends the client 32 random bytes. The client adds them to the request digest as one more `lp(challenge)` field, using the same `lp` framing as the recommended digest above, and signs that with `Holder::login_for_request`. The server recomputes the digest from the challenge it issued and stored, and checks with `verify_login_for_request`. A challenge is good once: the server deletes it on first use, so a second proof over the same challenge finds nothing to compute a digest from.
+
+```text
+request_digest = SHA-256( lp(method) || lp(path) || lp(SHA-256(body)) || lp(challenge) )
+```
+
+## Not in this crate
+
+Three things are left out on purpose. Each is something the app does itself.
+
+- **A free-form constraints field on a delegation.** A delegation's limits are `Bounds`, which the crate can check. Any other limit is the app's own: it signs the limit as its own app state and checks it itself.
+- **Per-action bounds beyond `Bounds`.** `Bounds` has one set of ceilings for all of a delegation's actions. An app that wants a different ceiling per action keeps its own table keyed by `Delegation::id` and enforces it.
+- **A session statement.** After a login, the app runs its own session, such as a MAC over a key only the server holds. `LoginProof::session_commitment` is reserved in the wire format and does nothing in this release.
+
 ## Nonces and more than one instance
 
 Every proof's nonce is claimed in your `NonceStore` under its purpose and its signer's key, so one party's statement never spends another's nonce. The store keeps a nonce until the earlier of the proof's own expiry and `issued_at + MAX_AGE_CEILING_SECS` (3,600 s; a larger `max_age_secs` is clamped to it), plus `NONCE_SKEW_SECS` (300 s). That depends only on the proof, so instances with different `max_age_secs` agree. Two things are still yours: **every instance at one audience must share one store**, and their clocks must stay within the skew margin of the store's.
@@ -108,7 +141,7 @@ With `serde`, byte fields are base64url text, and decoding is strict. Only the c
 
 ## Version policy
 
-- **We never yank.** A security defect is fixed forward in a new release and reported as a RustSec advisory, so `cargo audit` and `cargo deny` flag the affected versions.
+- **Fix forward, and yank only with a recorded reason.** A fix ships as a new release, and a security fix also gets a RustSec advisory, so `cargo audit` and `cargo deny` flag the affected versions. A security bug alone is not a reason to yank. A version is yanked only when it can't be installed or would mislead, with the reason in `CHANGELOG.md`.
 - **More than one line may be live.** A line is a `0.x` minor series, such as `0.1`.
 - **A legacy line gets 6 months of security patches**, starting the day its successor line ships.
 - **After the window, the line is unsupported.** It gets no more fixes. Every version stays downloadable.
@@ -123,20 +156,22 @@ The full policy is the family's [STABILITY.md](https://github.com/0x307/aethel-r
 
 ## The 0x307 crate family
 
-`aethel-auth` is one of seven open-source crates from [0x307](https://0x307.com/crates), held to one
+`aethel-auth` is one of nine open-source crates from [0x307](https://0x307.com/crates), held to one
 audit and stability standard.
 
-| Crate | Tier | What it does |
-|---|---|---|
-| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) |
-| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes |
-| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing |
-| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start |
-| [aethel-vault](https://crates.io/crates/aethel-vault) | Preview | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records |
-| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Preview | Delegated authority for agents: bounded, revocable delegation and per-request proofs a relying party verifies |
-| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path |
+| Crate | Tier | What it does | Builds on |
+|---|---|---|---|
+| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes | none in the family |
+| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) | none in the family |
+| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing | pqc-sig 0.5 |
+| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Preview | Delegated authority for agent identities: login proofs, bounded delegation, step-up approval, revocation | aethel-core 0.7 |
+| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start | pqc-sig 0.5 (aethel-core 0.7 vendored) |
+| [erand-nats](https://crates.io/crates/erand-nats) | Preview | A post-quantum NATS client inside a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [witan](https://crates.io/crates/witan) | Preview | Post-quantum gossip engine with message-level authentication, as a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [aethel-vault](https://crates.io/crates/aethel-vault) | Lab | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records | aethel-core 0.7 |
+| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path | pqc-kem 0.3, pqc-sig 0.5 |
 
-**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research, never on an identity or payment path.
+**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research and experiments: try them, but keep them off a production identity or payment path.
 
 **Runnable examples:** [0x307/examples](https://github.com/0x307/examples), one program per
 crate, pinned to the published versions.
