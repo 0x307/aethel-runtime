@@ -3,6 +3,64 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] - Unreleased
+
+Docs, tests and CI only. No change to the public API, to any signed bytes or
+to any JSON, and none to `aethel-vault`. The only change under `src/` is
+rustdoc comment lines.
+
+### Documentation
+
+- **README: "Login proofs and revocation".** `verify_login` and
+  `verify_login_for_request` take no `RevokedKeys` and do not check
+  revocation. A relying party that accepts logins checks the proof's signer
+  key against its own revoked set after verifying, or uses `authorise`. The
+  section shows the check. This was true of every earlier release.
+- **README: "A server challenge".** How a relying party ties a login to a
+  value it chose, by adding it to the request digest as one more `lp(..)`
+  field and verifying with `verify_login_for_request`.
+- **README: "Not in this crate".** A free-form constraints field on a
+  delegation, per-action bounds beyond `Bounds`, and a session statement are
+  left to the app, each with how an app does it.
+- **Rustdoc:** `verify_login` and `verify_login_for_request` each say they do
+  not check revocation.
+- **The crate family table** in the README is the nine-crate table, with a
+  "Builds on" column.
+
+### Tests
+
+- `tests/login_patterns.rs` (needs `holder`): a login bound to a server
+  challenge is refused against a digest built from another challenge, and
+  accepted against the right one; `verify_login` accepts a revoked key's
+  proof, and the README's check refuses it.
+
+### Policy
+
+- **The yank policy is corrected.** 0.3.0 and earlier said "we never yank".
+  The rule is now: fix forward, and yank only when a version can't be
+  installed or would mislead, with one line under "Yanked versions" below.
+  A security bug alone is not a reason to yank. See `STABILITY.md` §5, which
+  is shared with `aethel-vault`. No `aethel-auth` version has been yanked.
+- **Security exception.** `STABILITY.md` §2 now carries the family's general
+  security exception: a fix for a security defect can ship in a patch release
+  even when it would otherwise be breaking, and the changelog names the rule
+  it breaks. It covers, and is wider than, the MSRV exception that 0.3.0
+  already described.
+- `supply-chain/audits.toml` is new: hand-written cargo-vet audits for
+  0.1.0, 0.2.0 and 0.3.0, at `safe-to-run`, in the maintainer's name. Not an
+  external review.
+
+### CI
+
+- `ci.yml` runs `pull_request` only for PRs into `main`, so stacked story
+  PRs don't run CI and the merge PR does. `push` to `main` is unchanged.
+- `cargo deny check advisories` passes on this tree with no change to
+  `Cargo.lock` beyond the crate's own version.
+
+### Yanked versions
+
+None. No `aethel-auth` version is yanked.
+
 ## [0.3.0] - 2026-11-04
 
 Breaking. The principal's approval becomes its own signed statement, and the

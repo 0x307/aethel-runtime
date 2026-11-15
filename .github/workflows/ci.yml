@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # PRs into main only. A stacked PR's base is another feature branch, so
+    # the stack's story PRs don't run CI; the merge PR, opened against main
+    # and holding the whole stack, does.
+    branches: [main]
 
 jobs:
   native:
