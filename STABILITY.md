@@ -121,8 +121,9 @@ early. The floor is what's meant to hold indefinitely, including through a slow 
   A yanked version still resolves from an existing `Cargo.lock`, so nothing already built
   breaks; new resolutions skip it.
 - **The gates that keep a release from needing a yank are in CI:** for `aethel-auth`, the wire
-  tests (`tests/wire_json.rs`, `tests/compat_f43ef88.rs`) and a build of the packaged `.crate`
-  itself.
+  tests (`tests/wire_json.rs`, `tests/wire_binary.rs`, `tests/compat_f43ef88.rs`, and the
+  recorded 0.3 delegations in `tests/vectors/v0_3_delegations.json`) and a build of the
+  packaged `.crate` itself.
 - **More than one line may be live.** A line is a `0.x` minor series, such as `0.3`. When a
   dependency forces a breaking release, the old line can stay in use alongside the new one.
 - **A legacy line gets 6 months of security patches.** The window starts on the day its
@@ -163,6 +164,20 @@ Per §3, tracked here until each item's removal ships (and called out again in
 
 ### `aethel-auth`
 
-None. 0.2.0 changed `authorise` and `check_approval`, and 0.3.0 replaced the approval and
-`approval_digest`, without a deprecation cycle, under the §3 security exception; see each
-release's `CHANGELOG.md` entry.
+None active. Breaks taken without a deprecation cycle, each with its migration note in that
+release's `CHANGELOG.md` entry:
+
+- **0.2.0** changed `authorise` and `check_approval`, and **0.3.0** replaced the approval and
+  `approval_digest`, under the §3 security exception.
+- **0.4.0**:
+  - `verify_login`, `verify_login_for_request` and `verify_step_up` gained a `revoked`
+    argument, under the §3 security exception: before 0.4 a revoked key could still sign in
+    and step up.
+  - `authorise` and `check_approval` gained a `revoked_delegations` argument, and `Bounds`
+    gained the public `approvers` field. These are §2 breaks (signature and field set) in a
+    `0.x` minor (§1). Nothing is removed, so §3 does not apply.
+  - `Approval.principal_key` was renamed to `approver_key`. This removal is a named exception
+    to §3, and it is **not** the security exception. With named approvers the signer is no
+    longer always the principal, so keeping the old name would misname it, and a Rust field
+    cannot carry a deprecated alias. `#[serde(alias = "principal_key")]` keeps 0.3 JSON
+    decoding; a 0.4 `Approval` serialises `approver_key`, which 0.3 readers reject.
