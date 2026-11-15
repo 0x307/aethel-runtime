@@ -44,6 +44,7 @@ fn bounds(action: &[u8]) -> Bounds {
         max_total: Some(20_000),
         window_secs: Some(86_400),
         approval_required_above: Some(100),
+        approvers: Vec::new(),
     }
 }
 

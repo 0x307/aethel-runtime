@@ -40,6 +40,14 @@ impl Value {
         }
     }
 
+    /// The delegation's id, for a delegation value.
+    pub fn delegation_id(&self) -> Option<[u8; 32]> {
+        match self {
+            Value::Delegation(v) => Some(v.id()),
+            _ => None,
+        }
+    }
+
     /// Decode `bytes` as this value's type and compare with `self`.
     pub fn decodes_from(&self, bytes: &[u8]) -> bool {
         match self {
@@ -49,6 +57,71 @@ impl Value {
             Value::Revocation(v) => DelegationRevocation::from_bytes(bytes).as_ref() == Ok(v),
         }
     }
+}
+
+/// Version 2 delegations (they name approvers), and an approval signed by a
+/// named approver. Kept apart from [`values`] so `wire_v1.json` is untouched.
+pub fn values_v2() -> Vec<(&'static str, &'static str, Value)> {
+    let principal = identity(0x11);
+    let delegate = identity(0x22);
+    let approver_a = identity(0x55);
+    let approver_b = identity(0x66);
+    let approver_c = identity(0x77);
+    let holder = Holder::new(&principal, AUDIENCE);
+    let (nb, exp) = (1_800_000_000, 1_800_003_600);
+
+    let d_one = holder.delegate_to_with_approvers(
+        delegate.public_key(),
+        Bounds::default(),
+        vec![approver_a.public_key()],
+        nb,
+        exp,
+    );
+    let d_full = holder.delegate_to_with_approvers(
+        delegate.public_key(),
+        Bounds {
+            actions: vec![b"pay".to_vec(), b"refund".to_vec(), b"read".to_vec()],
+            max_per_invocation: Some(10_000),
+            max_total: Some(20_000),
+            window_secs: Some(86_400),
+            approval_required_above: Some(100),
+            approvers: Vec::new(),
+        },
+        vec![
+            approver_a.public_key(),
+            approver_b.public_key(),
+            approver_c.public_key(),
+        ],
+        nb,
+        exp,
+    );
+    let a_by_approver = Holder::new(&approver_a, AUDIENCE).approve(
+        &d_full,
+        &[0x45; 32],
+        b"refund",
+        1_000,
+        [0x46; 32],
+        nb,
+        60,
+    );
+
+    vec![
+        (
+            "delegation_v2_one_approver",
+            "delegation",
+            Value::Delegation(d_one),
+        ),
+        (
+            "delegation_v2_full",
+            "delegation",
+            Value::Delegation(d_full),
+        ),
+        (
+            "approval_by_named_approver",
+            "approval",
+            Value::Approval(a_by_approver),
+        ),
+    ]
 }
 
 /// Two values per type: one minimal, one with every optional field set. A
@@ -68,6 +141,7 @@ pub fn values() -> Vec<(&'static str, &'static str, Value)> {
             max_total: Some(20_000),
             window_secs: Some(86_400),
             approval_required_above: Some(100),
+            approvers: Vec::new(),
         },
         nb,
         exp,

@@ -42,6 +42,7 @@ fn generate_v0_3_delegations() {
                 max_total: Some(20_000),
                 window_secs: Some(86_400),
                 approval_required_above: Some(100),
+                approvers: Vec::new(),
             },
         ),
         (
@@ -52,6 +53,7 @@ fn generate_v0_3_delegations() {
                 max_total: Some(0),
                 window_secs: Some(0),
                 approval_required_above: Some(0),
+                approvers: Vec::new(),
             },
         ),
         (
@@ -62,6 +64,7 @@ fn generate_v0_3_delegations() {
                 max_total: None,
                 window_secs: None,
                 approval_required_above: None,
+                approvers: Vec::new(),
             },
         ),
     ];
@@ -111,5 +114,34 @@ fn generate_wire_v1() {
         "vectors": entries,
     });
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/wire_v1.json");
+    std::fs::write(path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+}
+
+#[test]
+#[ignore = "writes tests/vectors/wire_v2.json; run on purpose"]
+fn generate_wire_v2() {
+    let entries: Vec<serde_json::Value> = common::values_v2()
+        .into_iter()
+        .map(|(name, kind, v)| {
+            let mut e = serde_json::json!({
+                "name": name,
+                "type": kind,
+                "hex": common::hex(&v.to_bytes()),
+            });
+            if let Some(id) = v.delegation_id() {
+                e["id_hex"] = serde_json::Value::String(common::hex(&id));
+            }
+            e
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "wire_version": 2,
+        "note": "delegations that name approvers (version 2), and an approval signed by a named approver (version 1)",
+        "principal_seed_byte": "0x11 repeated 32 times",
+        "delegate_seed_byte": "0x22 repeated 32 times",
+        "approver_seed_bytes": "0x55, 0x66, 0x77, each repeated 32 times",
+        "vectors": entries,
+    });
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/wire_v2.json");
     std::fs::write(path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
 }

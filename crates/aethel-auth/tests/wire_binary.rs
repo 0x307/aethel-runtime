@@ -8,10 +8,11 @@ mod common;
 use aethel_auth::{
     verify_delegation, Approval, AuthError, Bounds, Delegation, DelegationRevocation, LoginProof,
 };
-use common::{hex, unhex, values, Value, AUDIENCE};
+use common::{hex, unhex, values, values_v2, Value, AUDIENCE};
 
 const V0_3: &str = include_str!("vectors/v0_3_delegations.json");
 const WIRE_V1: &str = include_str!("vectors/wire_v1.json");
+const WIRE_V2: &str = include_str!("vectors/wire_v2.json");
 
 // ---- AC1: 0.3 delegations still decode, hash and verify -------------------
 
@@ -480,4 +481,221 @@ fn every_prefix_of_a_revocation_encoding_is_refused() {
             "{n}"
         );
     }
+}
+
+// ---- version 2: delegations that name approvers ---------------------------------
+
+fn sample_v2(name: &str) -> Vec<u8> {
+    values_v2()
+        .into_iter()
+        .find(|(n, _, _)| *n == name)
+        .unwrap()
+        .2
+        .to_bytes()
+}
+
+/// Whether the committed v2 entry matches the value built from its seeds:
+/// bytes, decode, and (for a delegation) the id.
+fn v2_entry_holds(value: &Value, entry: &serde_json::Value, hex_in_file: &str) -> bool {
+    let bytes = unhex(hex_in_file);
+    let id_ok = match (value.delegation_id(), entry.get("id_hex")) {
+        (Some(id), Some(recorded)) => hex(&id) == recorded.as_str().unwrap(),
+        (None, None) => true,
+        _ => false,
+    };
+    id_ok && value.to_bytes() == bytes && value.decodes_from(&bytes)
+}
+
+#[test]
+fn wire_v2_vectors_encode_decode_and_keep_their_ids() {
+    let doc: serde_json::Value = serde_json::from_str(WIRE_V2).unwrap();
+    let entries = doc["vectors"].as_array().unwrap();
+    let built = values_v2();
+    assert_eq!(entries.len(), built.len());
+    assert_eq!(built.len(), 3);
+    for (entry, (name, kind, value)) in entries.iter().zip(built.iter()) {
+        assert_eq!(entry["name"], *name);
+        assert_eq!(entry["type"], *kind);
+        assert!(
+            v2_entry_holds(value, entry, entry["hex"].as_str().unwrap()),
+            "{name}"
+        );
+    }
+}
+
+/// Control: one changed byte in the file's hex, and one changed byte in a
+/// recorded id, each make the check fail.
+#[test]
+fn a_changed_byte_in_a_wire_v2_vector_or_id_fails() {
+    let doc: serde_json::Value = serde_json::from_str(WIRE_V2).unwrap();
+    let built = values_v2();
+    for (entry, (name, _, value)) in doc["vectors"].as_array().unwrap().iter().zip(built.iter()) {
+        let mut bytes = unhex(entry["hex"].as_str().unwrap());
+        let mid = bytes.len() / 2;
+        bytes[mid] ^= 0x01;
+        assert!(!v2_entry_holds(value, entry, &hex(&bytes)), "{name} hex");
+
+        if let Some(id) = entry["id_hex"].as_str() {
+            let mut id = unhex(id);
+            id[3] ^= 0x01;
+            let mut tampered = entry.clone();
+            tampered["id_hex"] = serde_json::Value::String(hex(&id));
+            assert!(
+                !v2_entry_holds(value, &tampered, entry["hex"].as_str().unwrap()),
+                "{name} id"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_version_2_delegation_uses_version_byte_2_and_holds_its_signed_bytes() {
+    for name in ["delegation_v2_one_approver", "delegation_v2_full"] {
+        let b = sample_v2(name);
+        assert_eq!(&b[..2], &[0x01, 0x02], "{name}");
+        let d = Delegation::from_bytes(&b).unwrap();
+        assert!(!d.bounds.approvers.is_empty());
+        let at = offset_of_signed(&b);
+        let signed = d.signing_input();
+        assert_eq!(&b[at..at + signed.len()], &signed[..], "{name}");
+        assert_eq!(d.to_bytes(), b, "{name}: canonical");
+    }
+}
+
+#[test]
+fn control_the_unmodified_version_2_encodings_decode() {
+    assert!(Delegation::from_bytes(&sample_v2("delegation_v2_one_approver")).is_ok());
+    assert!(Delegation::from_bytes(&sample_v2("delegation_v2_full")).is_ok());
+    assert!(Approval::from_bytes(&sample_v2("approval_by_named_approver")).is_ok());
+}
+
+/// A version 1 header on a delegation with approvers is refused: the
+/// approvers would be bytes left in a block the version does not define.
+#[test]
+fn a_version_1_header_on_a_delegation_with_approvers_is_refused() {
+    let mut b = sample_v2("delegation_v2_full");
+    assert_eq!(b[1], 0x02);
+    b[1] = 0x01;
+    assert_eq!(Delegation::from_bytes(&b), Err(AuthError::Malformed));
+}
+
+/// The parts of a valid minimal v1 delegation: signer, signed block, signature.
+fn v1_parts() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let v1 = sample("delegation_minimal");
+    let at = offset_of_signed(&v1);
+    let signer_len = u32::from_be_bytes(v1[2..6].try_into().unwrap()) as usize;
+    let signed_len = u32::from_be_bytes(v1[at - 4..at].try_into().unwrap()) as usize;
+    (
+        v1[6..6 + signer_len].to_vec(),
+        v1[at..at + signed_len].to_vec(),
+        v1[at + signed_len + 4..].to_vec(),
+    )
+}
+
+/// A version 2 header with no approvers is refused: it would be a second
+/// encoding of a version 1 delegation.
+#[test]
+fn a_version_2_header_on_a_delegation_without_approvers_is_refused() {
+    let (signer, base, sig) = v1_parts();
+    let mut zero = base.clone();
+    zero.extend_from_slice(&0u32.to_be_bytes());
+    assert_eq!(
+        Delegation::from_bytes(&envelope(0x01, 2, &signer, &zero, &sig)),
+        Err(AuthError::Malformed)
+    );
+    // Control: the same bytes with one approver decode.
+    let mut one = base;
+    one.extend_from_slice(&1u32.to_be_bytes());
+    lp(&mut one, b"approver");
+    assert!(Delegation::from_bytes(&envelope(0x01, 2, &signer, &one, &sig)).is_ok());
+}
+
+#[test]
+fn other_types_do_not_read_version_2() {
+    for name in ["approval_full", "login_full", "delegation_revocation_full"] {
+        let mut b = sample(name);
+        b[1] = 0x02;
+        assert_eq!(
+            Approval::from_bytes(&b),
+            Err(AuthError::Malformed),
+            "{name}"
+        );
+        assert_eq!(
+            LoginProof::from_bytes(&b),
+            Err(AuthError::Malformed),
+            "{name}"
+        );
+        assert_eq!(
+            DelegationRevocation::from_bytes(&b),
+            Err(AuthError::Malformed),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_version_3_delegation_is_refused() {
+    let mut b = sample_v2("delegation_v2_full");
+    b[1] = 0x03;
+    assert_eq!(Delegation::from_bytes(&b), Err(AuthError::Malformed));
+}
+
+/// The approver count is not trusted for allocation: a count the remaining
+/// bytes cannot satisfy is refused before a buffer is made.
+#[test]
+fn an_approver_count_the_input_cannot_hold_is_refused() {
+    let (signer, base, sig) = v1_parts();
+    for count in [u32::MAX, 2, 1] {
+        let mut signed = base.clone();
+        signed.extend_from_slice(&count.to_be_bytes());
+        // No approver bytes follow the count.
+        assert_eq!(
+            Delegation::from_bytes(&envelope(0x01, 2, &signer, &signed, &sig)),
+            Err(AuthError::Malformed),
+            "count {count}"
+        );
+    }
+}
+
+#[test]
+fn version_2_bytes_with_a_defect_are_refused() {
+    let good = sample_v2("delegation_v2_full");
+
+    let mut trailing = good.clone();
+    trailing.push(0);
+    assert_eq!(Delegation::from_bytes(&trailing), Err(AuthError::Malformed));
+
+    // Bytes left inside the signed block after the last approver.
+    let at = offset_of_signed(&good);
+    let signed_len = u32::from_be_bytes(good[at - 4..at].try_into().unwrap()) as usize;
+    let signer = &good[6..at - 4];
+    let sig = &good[at + signed_len + 4..];
+    let mut signed = good[at..at + signed_len].to_vec();
+    signed.push(0);
+    assert_eq!(
+        Delegation::from_bytes(&envelope(0x01, 2, signer, &signed, sig)),
+        Err(AuthError::Malformed)
+    );
+    // Control: without the extra byte it is the original and decodes.
+    signed.pop();
+    assert_eq!(envelope(0x01, 2, signer, &signed, sig), good);
+    assert!(Delegation::from_bytes(&good).is_ok());
+
+    for n in (0..good.len()).step_by(61).chain([good.len() - 1]) {
+        assert_eq!(
+            Delegation::from_bytes(&good[..n]),
+            Err(AuthError::Malformed),
+            "cut at {n}"
+        );
+    }
+}
+
+#[test]
+fn an_approval_signed_by_an_approver_is_the_same_wire_form() {
+    let b = sample_v2("approval_by_named_approver");
+    assert_eq!(&b[..2], &[0x03, 0x01]);
+    let a = Approval::from_bytes(&b).unwrap();
+    // The signer block is the approver's key.
+    assert_eq!(&b[6..6 + a.approver_key.len()], &a.approver_key[..]);
+    assert_eq!(a.to_bytes(), b);
 }

@@ -12,18 +12,24 @@
 //! ```text
 //! type_tag   u8        0x01 Delegation, 0x02 LoginProof, 0x03 Approval,
 //!                      0x04 DelegationRevocation
-//! version    u8        0x01
+//! version    u8        0x01 (Delegation: 0x02 when it names approvers)
 //! signer     u32 BE length ‖ bytes    the key the signature verifies under
 //!                                     (Delegation: principal_key;
 //!                                      LoginProof: public_key;
-//!                                      Approval: principal_key;
+//!                                      Approval: approver_key;
 //!                                      DelegationRevocation: principal_key)
 //! signed     u32 BE length ‖ bytes    exactly `signing_input()`
 //! signature  u32 BE length ‖ bytes
 //! ```
 //!
-//! Version `0x02` is reserved for a later delegation format. It is refused
-//! today, as is any other tag or version.
+//! Version `0x02` is a [`Delegation`] that names approvers
+//! ([`Bounds::approvers`]): its signed block is the version 1 bytes, then a
+//! `u32` BE count and each approver length-prefixed. Content alone picks the
+//! version, so the decoder refuses a header that disagrees with it: a
+//! version 1 header on a delegation with approvers (bytes left in the signed
+//! block) and a version 2 header with no approvers (not canonical) are both
+//! [`AuthError::Malformed`]. Every other type reads and writes version 1
+//! only, and any other tag or version is refused.
 //!
 //! The `signed` block is the type's own `signing_input()`, byte for byte, so
 //! the bytes a signature covers are visible inside the encoding and nothing
@@ -64,8 +70,11 @@ pub const TAG_LOGIN_PROOF: u8 = 0x02;
 pub const TAG_APPROVAL: u8 = 0x03;
 /// Type tag of an encoded [`DelegationRevocation`].
 pub const TAG_DELEGATION_REVOCATION: u8 = 0x04;
-/// The only wire version this release reads and writes.
+/// The wire version of every statement, and of a [`Delegation`] with no
+/// approvers.
 pub const WIRE_VERSION_1: u8 = 0x01;
+/// The wire version of a [`Delegation`] that names approvers.
+pub const WIRE_VERSION_2: u8 = 0x02;
 
 /// A cursor over untrusted bytes. Every read is bounds-checked first.
 struct Reader<'a> {
@@ -166,14 +175,21 @@ impl<'a> Reader<'a> {
 
 /// The three outer fields, after the tag and version are checked.
 struct Envelope<'a> {
+    version: u8,
     signer: &'a [u8],
     signed: &'a [u8],
     signature: &'a [u8],
 }
 
-fn read_envelope(bytes: &[u8], tag: u8) -> Result<Envelope<'_>, AuthError> {
+/// Read the outer fields. `max_version` is the highest version this type
+/// has: 1 for every type but [`Delegation`], which has 2.
+fn read_envelope(bytes: &[u8], tag: u8, max_version: u8) -> Result<Envelope<'_>, AuthError> {
     let mut r = Reader::new(bytes);
-    if r.u8()? != tag || r.u8()? != WIRE_VERSION_1 {
+    if r.u8()? != tag {
+        return Err(AuthError::Malformed);
+    }
+    let version = r.u8()?;
+    if version < WIRE_VERSION_1 || version > max_version {
         return Err(AuthError::Malformed);
     }
     let signer = r.lp()?;
@@ -181,16 +197,17 @@ fn read_envelope(bytes: &[u8], tag: u8) -> Result<Envelope<'_>, AuthError> {
     let signature = r.lp()?;
     r.finish()?;
     Ok(Envelope {
+        version,
         signer,
         signed,
         signature,
     })
 }
 
-fn write_envelope(tag: u8, signer: &[u8], signed: &[u8], signature: &[u8]) -> Vec<u8> {
+fn write_envelope(tag: u8, version: u8, signer: &[u8], signed: &[u8], signature: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(2 + 12 + signer.len() + signed.len() + signature.len());
     out.push(tag);
-    out.push(WIRE_VERSION_1);
+    out.push(version);
     push_len_prefixed(&mut out, signer);
     push_len_prefixed(&mut out, signed);
     push_len_prefixed(&mut out, signature);
@@ -198,12 +215,18 @@ fn write_envelope(tag: u8, signer: &[u8], signed: &[u8], signature: &[u8]) -> Ve
 }
 
 impl Delegation {
-    /// The canonical binary encoding: tag `0x01`, version `0x01`, the
-    /// principal key, [`Delegation::signing_input`] and the signature, each
-    /// length-prefixed. See [`crate::wire`] for the layout.
+    /// The canonical binary encoding: tag `0x01`, version `0x01` (`0x02`
+    /// when the delegation names approvers), the principal key,
+    /// [`Delegation::signing_input`] and the signature, each length-prefixed.
+    /// See [`crate::wire`] for the layout.
     pub fn to_bytes(&self) -> Vec<u8> {
         write_envelope(
             TAG_DELEGATION,
+            if self.is_v2() {
+                WIRE_VERSION_2
+            } else {
+                WIRE_VERSION_1
+            },
             &self.principal_key,
             &self.signing_input(),
             &self.signature,
@@ -215,9 +238,11 @@ impl Delegation {
     /// Returns [`AuthError::Malformed`] for any defect; see [`crate::wire`]
     /// for the list. **This checks structure only, never the signature.**
     /// Pass the result to [`crate::verify_delegation`] or
-    /// [`crate::authorise`] before relying on it.
+    /// [`crate::authorise`] before relying on it. The approver limits
+    /// ([`Bounds::approvers`]) are `verify_delegation`'s to check, not this
+    /// function's; only the structure and the version/content match are.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {
-        let env = read_envelope(bytes, TAG_DELEGATION)?;
+        let env = read_envelope(bytes, TAG_DELEGATION, WIRE_VERSION_2)?;
         let mut s = Reader::new(env.signed);
         let delegate_key = s.lp()?.to_vec();
         let audience = s.lp()?.to_vec();
@@ -240,6 +265,26 @@ impl Delegation {
         let max_total = s.opt_u128()?;
         let approval_required_above = s.opt_u128()?;
         let window_secs = s.opt_u64()?;
+
+        // Version 2 continues with the approvers; version 1 ends here, so
+        // approvers under a version 1 header are bytes left in the block.
+        // The same size argument as the actions bounds the allocation.
+        let mut approvers = Vec::new();
+        if env.version == WIRE_VERSION_2 {
+            let count = s.u32()? as usize;
+            if count > s.rest.len() / 4 {
+                return Err(AuthError::Malformed);
+            }
+            approvers.reserve(count);
+            for _ in 0..count {
+                approvers.push(s.lp()?.to_vec());
+            }
+            // Content picks the version: version 2 with no approvers would be
+            // a second encoding of a version 1 delegation.
+            if approvers.is_empty() {
+                return Err(AuthError::Malformed);
+            }
+        }
         s.finish()?;
 
         Ok(Delegation {
@@ -252,6 +297,7 @@ impl Delegation {
                 max_total,
                 window_secs,
                 approval_required_above,
+                approvers,
             },
             not_before,
             expires_at,
@@ -267,6 +313,7 @@ impl LoginProof {
     pub fn to_bytes(&self) -> Vec<u8> {
         write_envelope(
             TAG_LOGIN_PROOF,
+            WIRE_VERSION_1,
             &self.public_key,
             &self.signing_input(),
             &self.signature,
@@ -282,7 +329,7 @@ impl LoginProof {
     /// never the signature.** Pass the result to [`crate::verify_login`] or
     /// [`crate::verify_login_for_request`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {
-        let env = read_envelope(bytes, TAG_LOGIN_PROOF)?;
+        let env = read_envelope(bytes, TAG_LOGIN_PROOF, WIRE_VERSION_1)?;
         let mut s = Reader::new(env.signed);
         let audience = s.lp()?.to_vec();
         let issued_at = s.u64()?;
@@ -322,12 +369,13 @@ impl LoginProof {
 
 impl Approval {
     /// The canonical binary encoding: tag `0x03`, version `0x01`, the
-    /// principal key, [`Approval::signing_input`] and the signature, each
+    /// approver key, [`Approval::signing_input`] and the signature, each
     /// length-prefixed. See [`crate::wire`] for the layout.
     pub fn to_bytes(&self) -> Vec<u8> {
         write_envelope(
             TAG_APPROVAL,
-            &self.principal_key,
+            WIRE_VERSION_1,
+            &self.approver_key,
             &self.signing_input(),
             &self.signature,
         )
@@ -339,7 +387,7 @@ impl Approval {
     /// for the list. **This checks structure only, never the signature.**
     /// Pass the result to [`crate::check_approval`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {
-        let env = read_envelope(bytes, TAG_APPROVAL)?;
+        let env = read_envelope(bytes, TAG_APPROVAL, WIRE_VERSION_1)?;
         let mut s = Reader::new(env.signed);
         let audience = s.lp()?.to_vec();
         let issued_at = s.u64()?;
@@ -352,7 +400,7 @@ impl Approval {
         s.finish()?;
 
         Ok(Approval {
-            principal_key: env.signer.to_vec(),
+            approver_key: env.signer.to_vec(),
             audience,
             delegation_id,
             request_digest,
@@ -373,6 +421,7 @@ impl DelegationRevocation {
     pub fn to_bytes(&self) -> Vec<u8> {
         write_envelope(
             TAG_DELEGATION_REVOCATION,
+            WIRE_VERSION_1,
             &self.principal_key,
             &self.signing_input(),
             &self.signature,
@@ -385,7 +434,7 @@ impl DelegationRevocation {
     /// for the list. **This checks structure only, never the signature.**
     /// Pass the result to [`crate::verify_delegation_revocation`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {
-        let env = read_envelope(bytes, TAG_DELEGATION_REVOCATION)?;
+        let env = read_envelope(bytes, TAG_DELEGATION_REVOCATION, WIRE_VERSION_1)?;
         let mut s = Reader::new(env.signed);
         let audience = s.lp()?.to_vec();
         let delegation_id = s.lp32()?;

@@ -46,6 +46,7 @@ fn bounds() -> Bounds {
         max_total: Some(20_000),
         window_secs: Some(86_400),
         approval_required_above: Some(100),
+        approvers: Vec::new(),
     }
 }
 
@@ -133,7 +134,7 @@ fn only_the_principal_can_approve() {
         Err(AuthError::NotAuthorised)
     );
     let mut relabelled = by_agent.clone();
-    relabelled.principal_key = owner.public_key();
+    relabelled.approver_key = owner.public_key();
     assert_eq!(
         check(&d, &relabelled, &owner, NONE_REVOKED, &nonces),
         Err(AuthError::BadSignature)

@@ -41,8 +41,8 @@ use crate::approval::Approval;
 use crate::delegation::{Bounds, Delegation};
 use crate::proof::{LoginProof, StepUpProof};
 use crate::purposes::{
-    AUTH_APPROVAL_V1, AUTH_DELEGATION_REVOCATION_V1, AUTH_DELEGATION_V1, AUTH_LOGIN_V1,
-    AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
+    AUTH_APPROVAL_V1, AUTH_DELEGATION_REVOCATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1,
+    AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
 };
 use crate::statements::{DelegationRevocation, Revocation, RevokedBy, Succession};
 
@@ -153,7 +153,9 @@ impl<'a> Holder<'a> {
         proof
     }
 
-    /// As a delegation's principal, approve one request its delegate made.
+    /// As a delegation's principal (or one of its named approvers), approve
+    /// one request its delegate made. Any holder can sign; whether the
+    /// approval counts is [`crate::check_approval`]'s decision.
     ///
     /// Signs an [`Approval`] under `AUTH_APPROVAL_V1` naming this delegation,
     /// the relying party's `request_digest`, the `action` and the exact
@@ -172,7 +174,7 @@ impl<'a> Holder<'a> {
         valid_for_secs: u64,
     ) -> Approval {
         let mut approval = Approval {
-            principal_key: self.public_key(),
+            approver_key: self.public_key(),
             audience: self.audience.clone(),
             delegation_id: delegation.id(),
             request_digest: *request_digest,
@@ -208,8 +210,36 @@ impl<'a> Holder<'a> {
             expires_at,
             signature: Vec::new(),
         };
-        delegation.signature = self.sign(AUTH_DELEGATION_V1, &delegation.signing_input());
+        delegation.signature = self.sign(delegation.purpose(), &delegation.signing_input());
         delegation
+    }
+
+    /// As [`Holder::delegate_to`], also naming `approvers`: keys that may sign
+    /// an [`Approval`] under this delegation besides this principal.
+    ///
+    /// The result is a version 2 delegation, signed under
+    /// `AUTH_DELEGATION_V2`. An empty `approvers` gives exactly what
+    /// `delegate_to` gives (version 1). The limits (at most 8, none empty, no
+    /// duplicates, none equal to the principal or delegate) are not enforced
+    /// here: [`crate::verify_delegation`] refuses a delegation that breaks
+    /// them with [`crate::AuthError::Malformed`].
+    pub fn delegate_to_with_approvers(
+        &self,
+        delegate_key: Vec<u8>,
+        bounds: Bounds,
+        approvers: Vec<Vec<u8>>,
+        not_before: u64,
+        expires_at: u64,
+    ) -> Delegation {
+        self.delegate_to(
+            delegate_key,
+            Bounds {
+                approvers,
+                ..bounds
+            },
+            not_before,
+            expires_at,
+        )
     }
 
     /// End one delegation this identity granted, leaving its others standing.

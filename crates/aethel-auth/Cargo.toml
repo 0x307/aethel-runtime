@@ -158,3 +158,8 @@ required-features = ["holder", "serde"]
 name = "delegation_revocation"
 path = "tests/delegation_revocation.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "named_approvers"
+path = "tests/named_approvers.rs"
+required-features = ["holder", "serde"]

@@ -147,6 +147,7 @@ fn delegation(c: &mut Criterion) {
         max_total: Some(10_000),
         window_secs: Some(86_400),
         approval_required_above: Some(500),
+        approvers: Vec::new(),
     };
     let delegate_key_copy = delegate_key.clone();
     let delegation = principal.delegate_to(delegate_key, bounds, NOW, NOW + 3600);

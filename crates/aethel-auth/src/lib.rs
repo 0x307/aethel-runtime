@@ -154,6 +154,11 @@ pub mod purposes {
     /// [`AUTH_REVOCATION_V1`], so a key revocation can never be read as one of
     /// these, or the reverse.
     pub const AUTH_DELEGATION_REVOCATION_V1: &[u8] = b"aethel-auth/delegation-revocation/v1";
+
+    /// A version 2 [`crate::Delegation`]: one that names approvers
+    /// ([`crate::Bounds::approvers`]). Distinct from [`AUTH_DELEGATION_V1`],
+    /// so neither version's signature can be read as the other's.
+    pub const AUTH_DELEGATION_V2: &[u8] = b"aethel-auth/delegation/v2";
 }
 
 #[cfg(test)]
@@ -372,6 +377,7 @@ version = \"0.13\"
             AUTH_DELEGATION_V1,
             AUTH_APPROVAL_V1,
             AUTH_DELEGATION_REVOCATION_V1,
+            AUTH_DELEGATION_V2,
         ];
 
         // A purpose defined here must not repeat any registered in aethel-core

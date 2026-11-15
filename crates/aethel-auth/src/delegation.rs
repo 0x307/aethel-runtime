@@ -54,7 +54,6 @@
 //! second. A caller cannot reach "authorised" without saying what it knows
 //! about revocation. [`Delegation::id`] is also the stable key to track a
 //! delegation by, for the running total.
-//! running total.
 //!
 //! # Whose delegation it is
 //!
@@ -75,7 +74,10 @@ use aethel_core::signing::verify_with_purpose;
 
 use crate::error::AuthError;
 use crate::proof::{push_len_prefixed, shake256_32};
-use crate::purposes::AUTH_DELEGATION_V1;
+use crate::purposes::{AUTH_DELEGATION_V1, AUTH_DELEGATION_V2};
+
+/// The most approvers a delegation may name.
+pub const MAX_APPROVERS: usize = 8;
 
 /// The keys this relying party has seen a verified revocation for.
 ///
@@ -184,6 +186,36 @@ pub struct Bounds {
     /// it need no approval however many there are, so a principal who cares
     /// about the sum sets `max_total` (and `window_secs`) as well.
     pub approval_required_above: Option<u128>,
+    /// ML-DSA-65 keys that may sign an [`crate::Approval`] under this
+    /// delegation **besides the principal**. Empty by default.
+    ///
+    /// An approver can approve and nothing else: it cannot sign a
+    /// delegation, a [`crate::DelegationRevocation`] or any other statement
+    /// for the principal, and nothing but [`crate::check_approval`] reads this
+    /// list. A named approver that is in the relying party's revoked keys is
+    /// refused with [`AuthError::Revoked`].
+    ///
+    /// **Content picks the version.** An empty list is a version 1
+    /// delegation, byte for byte what 0.3 signs (same signed bytes, purpose
+    /// and id). A non-empty list makes a version 2 delegation, which signs
+    /// the version 1 bytes, then a `u32` BE count and each approver
+    /// length-prefixed, under [`crate::purposes::AUTH_DELEGATION_V2`], with
+    /// its own id label. So adding or removing an approver needs a new
+    /// signature: the old one is refused with [`AuthError::BadSignature`].
+    ///
+    /// Limits, checked by [`verify_delegation`] before the signature, each
+    /// refused with [`AuthError::Malformed`]: at most [`MAX_APPROVERS`], none
+    /// empty, no duplicates, and none equal to the delegation's
+    /// `principal_key` or `delegate_key`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            with = "crate::b64::vec_bytes"
+        )
+    )]
+    pub approvers: Vec<Vec<u8>>,
 }
 
 /// A signed grant of bounded authority.
@@ -205,7 +237,8 @@ pub struct Delegation {
     pub not_before: u64,
     /// Unix seconds. Not valid at or after this.
     pub expires_at: u64,
-    /// ML-DSA-65 signature by the **principal**, under `AUTH_DELEGATION_V1`.
+    /// ML-DSA-65 signature by the **principal**, under `AUTH_DELEGATION_V1`
+    /// (version 1, no approvers) or `AUTH_DELEGATION_V2` (version 2).
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
@@ -255,7 +288,33 @@ impl Delegation {
             None => out.push(0),
         }
 
+        // Version 2 only: the version 1 bytes above, untouched, then the
+        // approvers. An empty list appends nothing, so a delegation without
+        // approvers signs exactly what 0.3 signed.
+        if self.is_v2() {
+            out.extend_from_slice(&(self.bounds.approvers.len() as u32).to_be_bytes());
+            for approver in &self.bounds.approvers {
+                push_len_prefixed(&mut out, approver);
+            }
+        }
+
         out
+    }
+
+    /// Whether this is a version 2 delegation: it names approvers. Content
+    /// alone decides, so there is no version field to disagree with it.
+    pub(crate) fn is_v2(&self) -> bool {
+        !self.bounds.approvers.is_empty()
+    }
+
+    /// The purpose this delegation is signed under: `AUTH_DELEGATION_V1`, or
+    /// `AUTH_DELEGATION_V2` when it names approvers.
+    pub(crate) fn purpose(&self) -> &'static [u8] {
+        if self.is_v2() {
+            AUTH_DELEGATION_V2
+        } else {
+            AUTH_DELEGATION_V1
+        }
     }
 
     /// A stable 32-byte identifier for this delegation, for a relying party's
@@ -264,7 +323,8 @@ impl Delegation {
     ///
     /// `SHAKE-256` over a domain label, the principal key, the signed bytes and
     /// the signature, each length-prefixed. So it is one id per distinct
-    /// signed statement.
+    /// signed statement. The label is `aethel-auth/delegation-id/v1`, or
+    /// `.../v2` for a delegation with approvers.
     ///
     /// # What it is stable over, and what changes it
     ///
@@ -290,7 +350,14 @@ impl Delegation {
     /// is not.
     pub fn id(&self) -> [u8; 32] {
         let mut input = Vec::with_capacity(5_600 + self.audience.len());
-        push_len_prefixed(&mut input, b"aethel-auth/delegation-id/v1");
+        push_len_prefixed(
+            &mut input,
+            if self.is_v2() {
+                b"aethel-auth/delegation-id/v2"
+            } else {
+                b"aethel-auth/delegation-id/v1"
+            },
+        );
         push_len_prefixed(&mut input, &self.principal_key);
         push_len_prefixed(&mut input, &self.signing_input());
         push_len_prefixed(&mut input, &self.signature);
@@ -340,6 +407,10 @@ impl RemainingObligations {
 ///
 /// Verifies the principal's signature over the whole statement, including the
 /// delegate key and every bound, so nothing in it can be altered after signing.
+/// A delegation with approvers is checked under `AUTH_DELEGATION_V2`, one
+/// without under `AUTH_DELEGATION_V1`, so neither can be relabelled as the
+/// other. The approver limits ([`Bounds::approvers`]) are checked before the
+/// signature and refused with [`AuthError::Malformed`].
 pub fn verify_delegation(
     delegation: &Delegation,
     expected_audience: &[u8],
@@ -353,6 +424,8 @@ pub fn verify_delegation(
         return Err(AuthError::Malformed);
     }
 
+    check_approver_limits(delegation)?;
+
     if delegation.audience != expected_audience {
         return Err(AuthError::AudienceMismatch);
     }
@@ -363,7 +436,7 @@ pub fn verify_delegation(
 
     let verified = verify_with_purpose(
         &delegation.principal_key,
-        AUTH_DELEGATION_V1,
+        delegation.purpose(),
         &delegation.signing_input(),
         &delegation.signature,
     )
@@ -373,6 +446,25 @@ pub fn verify_delegation(
         return Err(AuthError::BadSignature);
     }
 
+    Ok(())
+}
+
+/// The limits on named approvers. Each violation is `Malformed`, and none
+/// needs the signature, so they run first.
+fn check_approver_limits(delegation: &Delegation) -> Result<(), AuthError> {
+    let approvers = &delegation.bounds.approvers;
+    if approvers.len() > MAX_APPROVERS {
+        return Err(AuthError::Malformed);
+    }
+    for (i, a) in approvers.iter().enumerate() {
+        if a.is_empty()
+            || *a == delegation.principal_key
+            || *a == delegation.delegate_key
+            || approvers[..i].contains(a)
+        {
+            return Err(AuthError::Malformed);
+        }
+    }
     Ok(())
 }
 

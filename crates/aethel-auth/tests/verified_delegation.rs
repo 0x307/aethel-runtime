@@ -23,6 +23,7 @@ fn spend_bounds() -> Bounds {
         max_total: Some(2_000),
         window_secs: Some(86_400),
         approval_required_above: Some(250),
+        approvers: Vec::new(),
     }
 }
 

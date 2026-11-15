@@ -26,6 +26,14 @@ All notable changes to this crate are documented here. Format loosely follows
   signature. A relying party that has accepted no delegation revocation passes
   `&[] as &[[u8; 32]]`. 0.3 callers add that one argument; no signed byte, id
   or JSON changes.
+- **`Approval.principal_key` is now `approver_key`, and `Bounds` has a new
+  field.** The approval's signer may now be a named approver as well as the
+  principal, so the field says what it is. 0.3 JSON still decodes
+  (`#[serde(alias = "principal_key")]`) and a new `Approval` serialises
+  `approver_key`; `Approval::signing_input` is unchanged. `Bounds` gains
+  `pub approvers: Vec<Vec<u8>>`, so a `Bounds { .. }` literal without
+  `..Bounds::default()` needs `approvers: Vec::new()`. 0.3 JSON decodes and an
+  empty list serialises exactly as 0.3 did.
 
 ### Added
 
@@ -62,15 +70,37 @@ All notable changes to this crate are documented here. Format loosely follows
   `RevokedKeys`.
 - **`Holder::revoke_delegation(&delegation, issued_at)`** (behind `holder`).
   Panics, as documented, if the holder is not the delegation's principal.
+- **Named approvers (delegation version 2).** `Bounds::approvers` lists
+  ML-DSA-65 keys that may sign an `Approval` under a delegation besides the
+  principal. `check_approval` accepts the principal or a named approver; any
+  other signer is `NotAuthorised`, and a signer in `revoked` is `Revoked`.
+  Approvers only approve: nothing else reads the list, so an approver cannot
+  sign a delegation or a `DelegationRevocation`. Content picks the version:
+  empty `approvers` is version 1, byte for byte what 0.3 signs (signed bytes,
+  purpose, id label and wire version `0x01`); a non-empty list is version 2,
+  which signs the version 1 bytes, then a `u32` BE count and each approver
+  length-prefixed, under the new `purposes::AUTH_DELEGATION_V2`, with id label
+  `aethel-auth/delegation-id/v2` and wire version `0x02`. Adding or removing an
+  approver needs a new signature (the old one is `BadSignature`). The limits,
+  checked by `verify_delegation` before the signature and refused as
+  `Malformed`: at most 8 approvers (`MAX_APPROVERS`), none empty, no
+  duplicates, none equal to the principal or delegate key. The decoder refuses
+  a version byte that does not match the content. `Holder::delegate_to_with_approvers`
+  builds one; `Holder::delegate_to` and `Holder::approve` are unchanged.
 - Test vectors in `tests/vectors/`: `wire_v1.json` (two values per type) and
   `v0_3_delegations.json`, recorded from the 0.3.1 code before any 0.4 change.
-  `wire_v1.json` also holds two `DelegationRevocation` values.
+  `wire_v1.json` also holds two `DelegationRevocation` values, and
+  `wire_v2.json` holds two version 2 delegations (with their ids) and an
+  approval signed by a named approver.
 
 ### Migration
 
 - 0.3 JSON still decodes, and the `id()`, `signing_input()` and signature of
   every 0.3 value are unchanged. The one source change a 0.3 caller needs is
   the extra `revoked_delegations` argument to `authorise` and `check_approval`.
+- A delegation without approvers is unchanged: it is version 1, with the same
+  bytes, purpose, id and wire encoding as 0.3. `Approval` JSON that says
+  `principal_key` still decodes; rename the field in code to `approver_key`.
 
 ## [0.3.1] - Unreleased
 
