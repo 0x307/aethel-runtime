@@ -46,6 +46,7 @@ fn bounds() -> Bounds {
         max_total: Some(20_000),
         window_secs: Some(86_400),
         approval_required_above: Some(100),
+        approvers: Vec::new(),
     }
 }
 
@@ -84,6 +85,7 @@ fn check_at(
         p,
         &[principal.public_key()],
         revoked,
+        &[] as &[[u8; 32]],
         &REQUEST,
         b"pay",
         amount,
@@ -132,7 +134,7 @@ fn only_the_principal_can_approve() {
         Err(AuthError::NotAuthorised)
     );
     let mut relabelled = by_agent.clone();
-    relabelled.principal_key = owner.public_key();
+    relabelled.approver_key = owner.public_key();
     assert_eq!(
         check(&d, &relabelled, &owner, NONE_REVOKED, &nonces),
         Err(AuthError::BadSignature)
@@ -185,6 +187,7 @@ fn an_approval_names_one_request_action_and_delegation() {
         params(),
         &[owner.public_key()],
         NONE_REVOKED,
+        &[] as &[[u8; 32]],
         &[0x41; 32],
         b"pay",
         500,
@@ -198,6 +201,7 @@ fn an_approval_names_one_request_action_and_delegation() {
         params(),
         &[owner.public_key()],
         NONE_REVOKED,
+        &[] as &[[u8; 32]],
         &REQUEST,
         b"refund",
         500,
@@ -387,6 +391,7 @@ fn after_a_succession_the_old_key_no_longer_approves() {
             AUDIENCE,
             &[old.public_key()],
             revoked.as_slice(),
+            &[] as &[[u8; 32]],
             &agent.public_key(),
             b"pay",
             Some(500),
@@ -410,10 +415,17 @@ fn another_keys_login_does_not_burn_the_approval_nonce() {
     let a = approve(&owner, &d, 500, 23);
 
     let burn = Holder::new(&agent, AUDIENCE).login(a.nonce, NOW - 1, 60);
-    block_on(verify_login(&burn, params(), &nonces)).expect("the agent's own login");
+    block_on(verify_login(&burn, params(), &[] as &[Vec<u8>], &nonces))
+        .expect("the agent's own login");
     // The owner's own login with the same nonce is a different purpose too.
     let own_login = Holder::new(&owner, AUDIENCE).login(a.nonce, NOW - 1, 60);
-    block_on(verify_login(&own_login, params(), &nonces)).expect("the owner's login");
+    block_on(verify_login(
+        &own_login,
+        params(),
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("the owner's login");
 
     check(&d, &a, &owner, NONE_REVOKED, &nonces).expect("the approval is still unspent");
     assert_eq!(

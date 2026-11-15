@@ -5,8 +5,7 @@
 //! API only, with a control for every refusal.
 
 use aethel_auth::{
-    verify_login, verify_login_for_request, AuthError, Holder, InMemoryNonceStore, RevokedKeys,
-    VerifyParams,
+    verify_login, verify_login_for_request, AuthError, Holder, InMemoryNonceStore, VerifyParams,
 };
 use aethel_core::signing::Identity;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
@@ -91,6 +90,7 @@ fn server_challenge_binds_the_login() {
         &proof,
         params(),
         &server_digest_b,
+        &[] as &[Vec<u8>],
         &InMemoryNonceStore::new(),
     ));
     assert_eq!(
@@ -105,14 +105,17 @@ fn server_challenge_binds_the_login() {
         &proof,
         params(),
         &server_digest_a,
+        &[] as &[Vec<u8>],
         &InMemoryNonceStore::new(),
     ))
     .expect("the proof bound to challenge A verifies against challenge A");
     assert_eq!(accepted.public_key, agent.public_key());
 }
 
+/// The README's "Login proofs and revocation": a plain call refuses a revoked
+/// key, with no check of the caller's own.
 #[test]
-fn plain_login_does_not_check_revocation() {
+fn login_refuses_a_revoked_key() {
     let revoked_agent = identity(2);
     let other_agent = identity(3);
 
@@ -120,25 +123,17 @@ fn plain_login_does_not_check_revocation() {
     let revoked: Vec<Vec<u8>> = vec![revoked_agent.public_key()];
 
     let proof = Holder::new(&revoked_agent, AUDIENCE).login([1u8; 32], NOW - 5, 60);
+    let nonces = InMemoryNonceStore::new();
+    assert_eq!(
+        block_on(verify_login(&proof, params(), &revoked[..], &nonces)).unwrap_err(),
+        AuthError::Revoked
+    );
+    assert_eq!(nonces.len(), 0, "a revoked key's proof spends no nonce");
 
-    // The gap: verify_login takes no revoked set, so it accepts the proof of
-    // a revoked key.
-    let who = block_on(verify_login(&proof, params(), &InMemoryNonceStore::new()))
-        .expect("verify_login does not check revocation");
-    assert_eq!(who.public_key, revoked_agent.public_key());
-
-    // The README's check, as the README shows it. It refuses that key.
-    let check = |who: aethel_auth::AuthenticatedIdentity| -> Result<(), AuthError> {
-        if revoked.is_revoked(&who.public_key) {
-            return Err(AuthError::Revoked);
-        }
-        Ok(())
-    };
-    assert_eq!(check(who), Err(AuthError::Revoked));
-
-    // Control: a key that is not in the set passes the same check.
+    // Control: a key that is not in the set passes the same call.
     let proof = Holder::new(&other_agent, AUDIENCE).login([2u8; 32], NOW - 5, 60);
-    let who = block_on(verify_login(&proof, params(), &InMemoryNonceStore::new()))
-        .expect("a valid proof");
-    assert_eq!(check(who), Ok(()));
+    let who = block_on(verify_login(&proof, params(), &revoked[..], &nonces))
+        .expect("a valid proof from a key that is not revoked");
+    assert_eq!(who.public_key, other_agent.public_key());
+    assert_eq!(nonces.len(), 1);
 }

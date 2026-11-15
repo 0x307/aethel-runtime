@@ -47,7 +47,13 @@ fn an_agent_logs_in() {
     let nonces = InMemoryNonceStore::new();
 
     let proof = holder.login([1u8; 32], NOW, 60);
-    let out = block_on(verify_login(&proof, params(CONSOLE), &nonces)).expect("round trip");
+    let out = block_on(verify_login(
+        &proof,
+        params(CONSOLE),
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("round trip");
 
     assert_eq!(out.public_key, holder.public_key());
     assert_eq!(out.strength, AuthStrength::Proven);
@@ -67,6 +73,7 @@ fn an_agent_logs_in_for_one_request() {
         &proof,
         params(CONSOLE),
         &request,
+        &[] as &[Vec<u8>],
         &nonces,
     ))
     .expect("round trip");
@@ -85,7 +92,14 @@ fn a_person_steps_up_for_a_sensitive_action() {
     let action = [0xE1; 32];
     let proof = holder.step_up([4u8; 32], NOW, 60, action);
 
-    block_on(verify_step_up(&proof, params(CONSOLE), &action, &nonces)).expect("round trip");
+    block_on(verify_step_up(
+        &proof,
+        params(CONSOLE),
+        &action,
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("round trip");
 }
 
 #[test]
@@ -114,6 +128,7 @@ fn a_principal_delegates_to_an_agent() {
         CONSOLE,
         &[principal_id.public_key()],
         no_revocations,
+        &[] as &[[u8; 32]],
         &agent_id.public_key(),
         b"transfer",
         Some(300),
@@ -147,6 +162,7 @@ fn a_principal_delegates_to_an_agent() {
             params(CONSOLE),
             &principals,
             no_revocations,
+            &[] as &[[u8; 32]],
             &request,
             b"transfer",
             300,
@@ -235,7 +251,13 @@ fn a_holder_bound_to_one_audience_cannot_act_at_another() {
     let proof = console.login([6u8; 32], NOW, 60);
 
     assert!(
-        block_on(verify_login(&proof, params(GATEWAY), &nonces)).is_err(),
+        block_on(verify_login(
+            &proof,
+            params(GATEWAY),
+            &[] as &[Vec<u8>],
+            &nonces
+        ))
+        .is_err(),
         "binding the holder to an audience is what makes per-relying-party \
          identities the natural shape rather than a rule to remember"
     );
@@ -262,6 +284,18 @@ fn two_audiences_mean_two_identities_and_nothing_links_them() {
 
     let console_nonces = InMemoryNonceStore::new();
     let gateway_nonces = InMemoryNonceStore::new();
-    block_on(verify_login(&a, params(CONSOLE), &console_nonces)).expect("console");
-    block_on(verify_login(&b, params(GATEWAY), &gateway_nonces)).expect("gateway");
+    block_on(verify_login(
+        &a,
+        params(CONSOLE),
+        &[] as &[Vec<u8>],
+        &console_nonces,
+    ))
+    .expect("console");
+    block_on(verify_login(
+        &b,
+        params(GATEWAY),
+        &[] as &[Vec<u8>],
+        &gateway_nonces,
+    ))
+    .expect("gateway");
 }

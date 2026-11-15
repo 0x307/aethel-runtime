@@ -1,4 +1,5 @@
-//! The principal's approval of one request under one delegation.
+//! An approval of one request under one delegation, by the principal or a
+//! named approver.
 //!
 //! A delegation can say that requests above an amount need the principal's
 //! approval ([`crate::Bounds::approval_required_above`]). This module is that
@@ -27,7 +28,7 @@
 use aethel_core::signing::verify_with_purpose;
 use subtle::ConstantTimeEq;
 
-use crate::delegation::{verify_delegation, Delegation, RevokedKeys};
+use crate::delegation::{verify_delegation, Delegation, RevokedDelegations, RevokedKeys};
 use crate::error::AuthError;
 use crate::nonce::NonceStore;
 use crate::proof::{check_envelope, claim_nonce, push_len_prefixed, VerifyParams};
@@ -37,9 +38,14 @@ use crate::purposes::AUTH_APPROVAL_V1;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Approval {
-    /// ML-DSA-65 public key of the approver: the delegation's principal.
-    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
-    pub principal_key: Vec<u8>,
+    /// ML-DSA-65 public key of the approver: the delegation's principal, or
+    /// one of its [`crate::Bounds::approvers`]. Named `principal_key` in 0.3,
+    /// and 0.3 JSON still decodes.
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "crate::b64::bytes", alias = "principal_key")
+    )]
+    pub approver_key: Vec<u8>,
     /// The relying party the approval is for.
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub audience: Vec<u8>,
@@ -94,22 +100,31 @@ impl Approval {
 ///
 /// Checks the delegation itself first, the same way [`crate::authorise`]
 /// does: genuine, live now, at this audience, from a principal in
-/// `principals`, with neither key in `revoked`. An approval that arrives after
+/// `principals`, with neither key in `revoked` and its id not in
+/// `revoked_delegations`. An approval that arrives after
 /// the delegation expired or a key was revoked is refused, even if
 /// `authorise` passed earlier.
 ///
-/// Then the approval: signed by the delegation's principal under
+/// Then the approval: signed by the delegation's principal, or by one of its
+/// named [`crate::Bounds::approvers`] (any other signer is
+/// [`AuthError::NotAuthorised`], and a signer in `revoked` is
+/// [`AuthError::Revoked`]), under
 /// [`AUTH_APPROVAL_V1`], at this audience, inside its window, naming this
 /// delegation, `request_digest`, `action` and `amount` exactly, with an unspent
 /// nonce. The relying party computes all three request values from the request
 /// it received, never from the client.
 #[allow(clippy::too_many_arguments)]
-pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
+pub async fn check_approval<
+    R: RevokedKeys + ?Sized,
+    D: RevokedDelegations + ?Sized,
+    N: NonceStore,
+>(
     delegation: &Delegation,
     approval: &Approval,
     params: VerifyParams<'_>,
     principals: &[Vec<u8>],
     revoked: &R,
+    revoked_delegations: &D,
     request_digest: &[u8; 32],
     action: &[u8],
     amount: u128,
@@ -118,17 +133,28 @@ pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
     if !principals.contains(&delegation.principal_key) {
         return Err(AuthError::NotAuthorised);
     }
-    if revoked.is_revoked(&delegation.principal_key) || revoked.is_revoked(&delegation.delegate_key)
+    if revoked.is_revoked(&delegation.principal_key)
+        || revoked.is_revoked(&delegation.delegate_key)
+        || revoked_delegations.is_revoked_delegation(&delegation.id())
     {
         return Err(AuthError::Revoked);
     }
     verify_delegation(delegation, params.expected_audience, params.now)?;
 
-    if approval.principal_key.is_empty() || approval.signature.is_empty() {
+    if approval.approver_key.is_empty() || approval.signature.is_empty() {
         return Err(AuthError::Malformed);
     }
-    if approval.principal_key != delegation.principal_key {
+    // The principal, or a key the principal named in the signed delegation.
+    // Any other signer is refused, whatever it signed.
+    if approval.approver_key != delegation.principal_key
+        && !delegation.bounds.approvers.contains(&approval.approver_key)
+    {
         return Err(AuthError::NotAuthorised);
+    }
+    // The principal's keys were checked above. A named approver is checked
+    // here, so a revoked approver's approval is refused like any revoked key.
+    if revoked.is_revoked(&approval.approver_key) {
+        return Err(AuthError::Revoked);
     }
     check_envelope(
         &approval.audience,
@@ -145,7 +171,7 @@ pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
     }
 
     let verified = verify_with_purpose(
-        &approval.principal_key,
+        &approval.approver_key,
         AUTH_APPROVAL_V1,
         &approval.signing_input(),
         &approval.signature,
@@ -158,7 +184,7 @@ pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
     claim_nonce(
         nonces,
         AUTH_APPROVAL_V1,
-        &approval.principal_key,
+        &approval.approver_key,
         &approval.nonce,
         approval.issued_at,
         approval.expires_at,

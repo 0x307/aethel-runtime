@@ -8,7 +8,7 @@ Delegated authority for post-quantum agent identities.
 
 `aethel-core` proves *who*. This crate expresses **what an entity may do, within what bounds, until when, and unless revoked**.
 
-> **Status: 0.3.1.** Per-request login proof (optionally bound to one request), bounded delegation, the principal's approval of one request, step-up, and succession and revocation statements, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. See `CHANGELOG.md`.
+> **Status: 0.4.0.** Per-request login proof (optionally bound to one request), bounded delegation with optional named approvers, an approval of one request, step-up, and succession and revocation statements (of a key, or of one delegation), a canonical binary encoding, and a verify-once delegation handle, with builders behind `holder`. For agents, which sign every request. There are no sessions in this release. 0.4.0 is a breaking release: see the migration notes in `CHANGELOG.md`.
 
 ## What a service hosts, and what an agent holds
 
@@ -48,7 +48,7 @@ Plain `rlib`, deliberately. A server-side verifier has no use for a `cdylib`, an
 
 ## Purpose bytes
 
-Every statement type has its own purpose, `aethel-auth/<thing>/v<n>`, passed to ML-DSA as its FIPS 204 context, so a signature for one statement type never verifies as another. This crate owns the `aethel-auth/` prefix. The first five purposes (login, step-up, delegation, revocation, succession) were registered in `aethel-core`'s registry and are re-exported from it unchanged; newer ones, starting with `aethel-auth/approval/v1`, are defined here in `purposes`, so a new statement type does not need an `aethel-core` release. A test checks that this crate's purposes are distinct, stay under its prefix, and repeat nothing in `aethel-core`'s registry.
+Every statement type has its own purpose, `aethel-auth/<thing>/v<n>`, passed to ML-DSA as its FIPS 204 context, so a signature for one statement type never verifies as another. This crate owns the `aethel-auth/` prefix. The first five purposes (login, step-up, delegation, revocation, succession) were registered in `aethel-core`'s registry and are re-exported from it unchanged; newer ones are defined here in `purposes`: `aethel-auth/approval/v1`, `aethel-auth/delegation-revocation/v1` and `aethel-auth/delegation/v2` (a delegation that names approvers), so a new statement type does not need an `aethel-core` release. A test checks that this crate's purposes are distinct, stay under its prefix, and repeat nothing in `aethel-core`'s registry.
 
 ## Two constraints this crate is built under
 
@@ -58,26 +58,122 @@ Every statement type has its own purpose, `aethel-auth/<thing>/v<n>`, passed to 
 
 ## What the relying party still enforces
 
-`authorise` checks that a delegation is genuine, live, for this relying party, from a principal the relying party recognises, with neither key revoked, issued to the key that just proved itself, and that the action and amount fall inside its declared bounds. The relying party brings two things it alone knows:
+`authorise` checks that a delegation is genuine, live, for this relying party, from a principal the relying party recognises, with neither key nor the delegation itself revoked, issued to the key that just proved itself, and that the action and amount fall inside its declared bounds. The relying party brings two things it alone knows:
 
 - **Which principals it recognises.** A delegation is signed by its own principal, so anyone can make one. Pass the principal keys you have enrolled (or the one account the request is for). Any other principal is refused.
-- **What it has seen revoked.** Keep the revocations you have verified and pass them as `RevokedKeys`: a slice or set of keys, or a closure over your own store. A delegation whose principal or delegate key is revoked is refused. A principal ends its delegates' authority by revoking its own key at that relying party. Compare keys as bytes, never as text.
+- **What it has seen revoked.** Keep the revocations you have verified and pass them as `RevokedKeys`: a slice or set of keys, or a closure over your own store. A delegation whose principal or delegate key is revoked is refused. A principal ends all its delegates' authority by revoking its own key at that relying party, or ends one delegation with a [`DelegationRevocation`](#revoking-one-delegation) and the set of revoked delegation ids, passed as `RevokedDelegations` directly after `revoked` (`&[] as &[[u8; 32]]` when you hold none). Compare keys as bytes, never as text.
 
 An amount is required under a delegation that sets any amount bound. `None` there is refused, because a caller that failed to read the amount and one with nothing to count look the same. An action with no quantity under a bounded delegation passes `Some(0)`.
 
 `authorise` returns `RemainingObligations` for what only the relying party can do:
 
 - **The running total.** Keep a total per delegation over `window_secs` and refuse once a request would exceed `max_total`. `Delegation::id` gives you a stable key for it. It is one id per distinct signed statement. Signing is deterministic, so a principal that signs identical terms twice gets the same id and one shared total; to give a separate budget, change a term such as `not_before`.
-- **Human approval.** Above `approval_required_above`, hold the request until the **principal** approves it. The approval is its own signed statement, an `Approval` under `aethel-auth/approval/v1`, never a step-up. It names, in the clear, the audience, the delegation (`Delegation::id`), your digest of the request, the action and the exact amount, so the principal's software can show each one before signing (`Holder::approve`). `check_approval` checks the delegation again as it stands *now* (signature, window, principal, revocation), then that the approval names exactly the request, action and amount you are about to perform, is signed by the principal, and has an unspent nonce. `approval_required_above: None` means no request needs approval; it applies to each request on its own, so set `max_total` to bound the sum.
+- **Human approval.** Above `approval_required_above`, hold the request until the **principal, or an approver the principal named in the delegation** (see [Named approvers](#named-approvers)), approves it. The approval is its own signed statement, an `Approval` under `aethel-auth/approval/v1`, never a step-up. It names, in the clear, the audience, the delegation (`Delegation::id`), your digest of the request, the action and the exact amount, so the principal's software can show each one before signing (`Holder::approve`). `check_approval` checks the delegation again as it stands *now* (signature, window, principal, both revoked sets), then that the approval is signed by the principal or a named approver (any other signer is `NotAuthorised`, and a signer in your revoked keys is `Revoked`), names exactly the request, action and amount you are about to perform, and has an unspent nonce. The signer is `Approval::approver_key`, named `principal_key` in 0.3. `approval_required_above: None` means no request needs approval; it applies to each request on its own, so set `max_total` to bound the sum.
 - **Succession.** After a verified succession, put `retired_key(&succession, audience)` in your revoked set, or the old key still approves under its delegations.
 
 `RemainingObligations` is `#[must_use]`: a caller that ignores it has left a cap unchecked. `is_clear()` is true only when there is no running total and no approval left to the caller.
+
+## Revoking one delegation
+
+A key `Revocation` ends every delegation its principal ever signed at a relying party. To end one, the principal signs a `DelegationRevocation`: the audience, the delegation's id (`Delegation::id`) and `issued_at`, under `aethel-auth/delegation-revocation/v1`. Its signed bytes can never be read as a key `Revocation`, or the reverse.
+
+```rust
+// The principal's side (needs the `holder` feature). Panics if `principal` is not
+// the delegation's principal: only the principal can revoke a delegation.
+let rev = Holder::new(&principal, audience).revoke_delegation(&delegation, now);
+
+// The relying party's side. Keep the id once the revocation verifies.
+verify_delegation_revocation(&rev, &delegation, audience)?;
+revoked_ids.push(delegation.id()); // revoked_ids: Vec<[u8; 32]>
+
+// From now on, pass the set to authorise and check_approval.
+let refused = authorise(
+    &delegation, audience, &principals, revoked_keys, revoked_ids.as_slice(),
+    &delegate_key, b"transfer", Some(5), now,
+); // Err(AuthError::Revoked)
+```
+
+`verify_delegation_revocation` checks, in this order: no field is empty; the revocation's audience, the audience you expect and the delegation's all agree (`AudienceMismatch`); the revocation names this delegation and is signed by its principal (`NotAuthorised`, which is what a delegate, an authority or a named approver gets); the signature (`BadSignature`). There is no time cutoff, and the delegation need not still be live: once you accept a revocation it holds from then on. `RevokedDelegations` is implemented for `[[u8; 32]]` and for any `Fn(&[u8; 32]) -> bool`, so a closure over your own store works.
+
+## Verify once, re-check cheaply
+
+`authorise` verifies the delegation's signature on every call. A relying party that sees the same delegation on many requests keeps a `VerifiedDelegation` instead:
+
+```rust
+// Once: everything authorise checks except the per-attempt parts.
+let verified = VerifiedDelegation::verify(
+    &delegation, audience, &principals, revoked_keys, revoked_ids, now,
+)?;
+
+// Per request: no signature check. Audience, window and both revoked sets are
+// checked again against what you pass now.
+verified.recheck(audience, revoked_keys, revoked_ids, now)?;
+let obligations = verified.authorise(
+    audience, revoked_keys, revoked_ids, &delegate_key, b"transfer", Some(5), now,
+)?;
+```
+
+The free `authorise` is `VerifiedDelegation::verify` followed by the handle's `authorise`, with the same errors. The handle holds no signature, has no public fields, no constructor but `verify`, and no serde or `Default`. It is a record that *this process* verified a delegation, not a credential: do not persist it or send it anywhere, and drop it if your set of enrolled principals changes, because it does not remember that set. Send the `Delegation` and let the receiver verify it.
+
+## Named approvers
+
+By default only the principal can sign an `Approval` under a delegation. A principal can name others in `Bounds::approvers`, for example a finance team's key, so a person other than the principal can approve a large request. An approver can approve and nothing else: nothing but `check_approval` reads the list, so an approver cannot sign a delegation or a `DelegationRevocation` for the principal.
+
+```rust
+let delegation = Holder::new(&principal, audience).delegate_to_with_approvers(
+    delegate_key,
+    bounds,
+    vec![approver_key], // ML-DSA-65 public keys
+    not_before,
+    expires_at,
+);
+
+// The approver signs with Holder::approve, as the principal would.
+let approval = Holder::new(&approver, audience)
+    .approve(&delegation, &digest, b"transfer", 500, nonce, now, 300);
+
+check_approval(
+    &delegation, &approval, params, &principals, revoked_keys, revoked_ids,
+    &digest, b"transfer", 500, &nonces,
+).await?;
+```
+
+- **Content picks the version.** An empty list is a version 1 delegation: byte for byte what 0.3 signs, under `aethel-auth/delegation/v1`, with the same id. A non-empty list is version 2: the version 1 bytes, then a `u32` big-endian count and each approver length-prefixed, under `aethel-auth/delegation/v2`, with its own id label. So adding or removing an approver needs a new signature: the old one is `BadSignature`.
+- **Limits**, checked by `verify_delegation` before the signature, each `Malformed`: at most 8 approvers (`MAX_APPROVERS`), none empty, no duplicates, none equal to the principal's or the delegate's key.
+- **Who `check_approval` accepts.** The principal or a named approver. Any other signer is `NotAuthorised`. An approver in your revoked keys is `Revoked`.
+- The signer of an `Approval` is `approver_key`, named `principal_key` in 0.3. 0.3 JSON that says `principal_key` still decodes.
+
+## Binary encoding
+
+`Delegation`, `LoginProof`, `Approval` and `DelegationRevocation` each have `to_bytes()` and `from_bytes(&[u8]) -> Result<Self, AuthError>`. It is the compact form for a transport that carries bytes. JSON stays supported.
+
+```rust
+let bytes: Vec<u8> = delegation.to_bytes();
+let back = Delegation::from_bytes(&bytes)?; // AuthError::Malformed on any defect
+assert_eq!(back, delegation);
+assert_eq!(back.to_bytes(), bytes);
+
+// Structure only. The signature is checked by the verify function, as always.
+verify_delegation(&back, audience, now)?;
+```
+
+The layout is the same for every type:
+
+```text
+type_tag   u8        0x01 Delegation, 0x02 LoginProof, 0x03 Approval, 0x04 DelegationRevocation
+version    u8        0x01 (a Delegation that names approvers is 0x02)
+signer     u32 BE length || bytes    the key the signature verifies under
+signed     u32 BE length || bytes    exactly signing_input()
+signature  u32 BE length || bytes
+```
+
+The `signed` block is the type's own `signing_input()`, so the bytes a signature covers are visible inside the encoding. Decoding is strict and canonical: trailing bytes, an unknown tag or version, a length past the end of the input, a nonce, digest or delegation id that is not 32 bytes, a `session_commitment` that is not 0 or 32, an option flag other than 0 or 1, and a version byte that disagrees with a delegation's approvers are all `Malformed`, and there is one encoding per value. No length in the input is trusted for an allocation. Test vectors are in [`tests/vectors/`](https://github.com/0x307/aethel-runtime/tree/main/crates/aethel-auth/tests/vectors).
 
 ## Binding a login proof to one request
 
 A plain login proof is bound to one relying party, one window and one nonce, but not to a request. Anyone who sees it before the relying party claims its nonce (a proxy that terminates TLS, a gateway, a log) can attach it to a different request at the same audience.
 
-To close that, the holder signs a digest of the request with `Holder::login_for_request`, and the relying party checks it with `verify_login_for_request(proof, params, &expected_digest, nonces)`. The digest is an optional field, `LoginProof::request_digest`, signed under the same `aethel-auth/login/v1` purpose. This is composition over the existing login proof, not a new construction.
+To close that, the holder signs a digest of the request with `Holder::login_for_request`, and the relying party checks it with `verify_login_for_request(proof, params, &expected_digest, &revoked, nonces)`. The digest is an optional field, `LoginProof::request_digest`, signed under the same `aethel-auth/login/v1` purpose. This is composition over the existing login proof, not a new construction.
 
 - **The relying party computes the expected digest** from the request it actually received. Never take it from the client: comparing the proof's digest with a digest the client also chose checks nothing.
 - **A proof without a digest is refused** by `verify_login_for_request`, because an unbound proof is good for any request.
@@ -100,20 +196,13 @@ A proof without a digest has the same signed bytes and the same JSON as before t
 
 ## Login proofs and revocation
 
-`verify_login` and `verify_login_for_request` take no `RevokedKeys` and do not check revocation. They check the audience, the clock, the signature and the nonce, and that is all. A key that has been revoked still produces a proof that verifies. `authorise` and `check_approval` do check revocation, because they take a `RevokedKeys`.
-
-A relying party that accepts logins therefore checks the proof's signer key against its own revoked set after verifying, or goes through `authorise`. The check, with `revoked` being the set you keep (a slice, a `HashSet<Vec<u8>>`, or a closure over your store):
+`verify_login`, `verify_login_for_request` and `verify_step_up` each take the relying party's revoked-key set, `revoked: &R where R: RevokedKeys`, directly before `nonces`. A proof signed by a key in it is refused with `AuthError::Revoked`. The set is the one you keep: a slice, a `HashSet<Vec<u8>>`, or a closure over your store.
 
 ```rust
-use aethel_auth::{AuthError, RevokedKeys};
-
-let who = verify_login(&proof, params, &nonces).await?;
-if revoked.is_revoked(&who.public_key) {
-    return Err(AuthError::Revoked);
-}
+let who = verify_login(&proof, params, &revoked, &nonces).await?;
 ```
 
-The same two lines follow `verify_login_for_request`. Keys are compared as bytes, as in `authorise`.
+The checks run in this order: the envelope (audience and clock), the digest checks, the signature, revocation, then the nonce claim. Revocation sits after the signature, so a caller who cannot sign as a key cannot tell whether it is revoked: a bad signature from a revoked key is `BadSignature`. It sits before the nonce claim, so a revoked key's proof never spends a nonce. Keys are compared as bytes, as in `authorise`. A relying party with no revoked keys passes `&[] as &[Vec<u8>]`.
 
 ## A server challenge
 
@@ -137,7 +226,7 @@ Every proof's nonce is claimed in your `NonceStore` under its purpose and its si
 
 ## Wire format: one spelling per value
 
-With `serde`, byte fields are base64url text, and decoding is strict. Only the canonical form is accepted: no padding, and no set bits after the last byte. A relying party stores and compares keys, and signatures cover the decoded bytes. A decoder that accepted several spellings of one key would let a revoked key come back under another spelling. The older JSON number-array shape is behind `legacy-number-arrays`, off by default.
+With `serde`, byte fields are base64url text, and decoding is strict. Only the canonical form is accepted: no padding, and no set bits after the last byte. A relying party stores and compares keys, and signatures cover the decoded bytes. A decoder that accepted several spellings of one key would let a revoked key come back under another spelling. The older JSON number-array shape is behind `legacy-number-arrays`, off by default. The [binary encoding](#binary-encoding) has the same property: one encoding per value.
 
 ## Version policy
 

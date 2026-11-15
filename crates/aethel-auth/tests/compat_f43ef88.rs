@@ -59,8 +59,13 @@ fn proofs_made_at_f43ef88_have_the_same_bytes_and_still_verify() {
             "{name}: the JSON changed"
         );
 
-        block_on(verify_login(&proof, params(), &InMemoryNonceStore::new()))
-            .unwrap_or_else(|e| panic!("{name}: an old proof no longer verifies: {e:?}"));
+        block_on(verify_login(
+            &proof,
+            params(),
+            &[] as &[Vec<u8>],
+            &InMemoryNonceStore::new(),
+        ))
+        .unwrap_or_else(|e| panic!("{name}: an old proof no longer verifies: {e:?}"));
     }
 }
 
@@ -78,6 +83,7 @@ fn an_old_proof_given_a_digest_does_not_verify() {
             &proof,
             params(),
             &[0xa1; 32],
+            &[] as &[Vec<u8>],
             &InMemoryNonceStore::new()
         ))
         .unwrap_err(),

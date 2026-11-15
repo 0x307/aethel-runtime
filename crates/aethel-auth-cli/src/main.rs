@@ -379,6 +379,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     max_total,
                     window_secs,
                     approval_required_above,
+                    approvers: Vec::new(),
                 },
                 start,
                 start + valid_for,

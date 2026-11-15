@@ -38,20 +38,22 @@
 //!
 //! # Ending a delegation
 //!
-//! A delegation ends at `expires_at`, or when the relying party stops
-//! honouring one of its two keys. This release has no statement that revokes
-//! one delegation and leaves the principal's others standing. A principal
-//! ends its delegates' authority at a relying party by revoking **its own**
-//! key there (`Holder::revoke_self`, behind the `holder` feature), which ends
-//! every delegation it issued at that relying party.
+//! A delegation ends at `expires_at`, when the relying party stops honouring
+//! one of its two keys, or when its principal revokes it by id.
 //!
-//! So a relying party must refuse a delegation whose `principal_key` or
-//! `delegate_key` it has seen a verified revocation for. The set of revoked
-//! keys is the relying party's state, so [`authorise`] takes it as an input
-//! ([`RevokedKeys`]) and refuses either key in it. A caller cannot reach
-//! "authorised" without saying what it knows about revocation.
-//! [`Delegation::id`] gives it a stable key to track a delegation by, for the
-//! running total.
+//! A principal ends **one** delegation with a
+//! [`DelegationRevocation`](crate::DelegationRevocation) (`Holder::revoke_delegation`,
+//! behind the `holder` feature), which leaves its other delegations standing.
+//! It ends **all** its delegates' authority at a relying party by revoking its
+//! own key there (`Holder::revoke_self`).
+//!
+//! The revoked keys and the revoked delegation ids are the relying party's
+//! state, so [`authorise`] takes both as inputs ([`RevokedKeys`] and
+//! [`RevokedDelegations`]) and refuses a delegation whose `principal_key` or
+//! `delegate_key` is in the first, or whose [`Delegation::id`] is in the
+//! second. A caller cannot reach "authorised" without saying what it knows
+//! about revocation. [`Delegation::id`] is also the stable key to track a
+//! delegation by, for the running total.
 //!
 //! # Whose delegation it is
 //!
@@ -72,7 +74,10 @@ use aethel_core::signing::verify_with_purpose;
 
 use crate::error::AuthError;
 use crate::proof::{push_len_prefixed, shake256_32};
-use crate::purposes::AUTH_DELEGATION_V1;
+use crate::purposes::{AUTH_DELEGATION_V1, AUTH_DELEGATION_V2};
+
+/// The most approvers a delegation may name.
+pub const MAX_APPROVERS: usize = 8;
 
 /// The keys this relying party has seen a verified revocation for.
 ///
@@ -116,6 +121,34 @@ impl RevokedKeys for std::collections::BTreeSet<Vec<u8>> {
     }
 }
 
+/// The delegations this relying party has seen a verified
+/// [`DelegationRevocation`](crate::DelegationRevocation) for.
+///
+/// [`authorise`] and [`crate::check_approval`] ask it about
+/// [`Delegation::id`] and refuse a delegation in it with
+/// [`AuthError::Revoked`]. Implemented for a slice of ids and for any
+/// `Fn(&[u8; 32]) -> bool`, mirroring [`RevokedKeys`].
+///
+/// A relying party that has accepted no delegation revocation passes an empty
+/// slice, `&[] as &[[u8; 32]]`: a statement about its state, made at the call.
+pub trait RevokedDelegations {
+    /// Whether the delegation with this [`Delegation::id`] has been revoked
+    /// at this relying party.
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool;
+}
+
+impl RevokedDelegations for [[u8; 32]] {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self.iter().any(|k| k == id)
+    }
+}
+
+impl<F: Fn(&[u8; 32]) -> bool> RevokedDelegations for F {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self(id)
+    }
+}
+
 /// What a delegate is permitted to do.
 ///
 /// `actions`, `max_per_invocation`, `max_total` and `window_secs` are
@@ -153,6 +186,36 @@ pub struct Bounds {
     /// it need no approval however many there are, so a principal who cares
     /// about the sum sets `max_total` (and `window_secs`) as well.
     pub approval_required_above: Option<u128>,
+    /// ML-DSA-65 keys that may sign an [`crate::Approval`] under this
+    /// delegation **besides the principal**. Empty by default.
+    ///
+    /// An approver can approve and nothing else: it cannot sign a
+    /// delegation, a [`crate::DelegationRevocation`] or any other statement
+    /// for the principal, and nothing but [`crate::check_approval`] reads this
+    /// list. A named approver that is in the relying party's revoked keys is
+    /// refused with [`AuthError::Revoked`].
+    ///
+    /// **Content picks the version.** An empty list is a version 1
+    /// delegation, byte for byte what 0.3 signs (same signed bytes, purpose
+    /// and id). A non-empty list makes a version 2 delegation, which signs
+    /// the version 1 bytes, then a `u32` BE count and each approver
+    /// length-prefixed, under [`crate::purposes::AUTH_DELEGATION_V2`], with
+    /// its own id label. So adding or removing an approver needs a new
+    /// signature: the old one is refused with [`AuthError::BadSignature`].
+    ///
+    /// Limits, checked by [`verify_delegation`] before the signature, each
+    /// refused with [`AuthError::Malformed`]: at most [`MAX_APPROVERS`], none
+    /// empty, no duplicates, and none equal to the delegation's
+    /// `principal_key` or `delegate_key`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            with = "crate::b64::vec_bytes"
+        )
+    )]
+    pub approvers: Vec<Vec<u8>>,
 }
 
 /// A signed grant of bounded authority.
@@ -174,7 +237,8 @@ pub struct Delegation {
     pub not_before: u64,
     /// Unix seconds. Not valid at or after this.
     pub expires_at: u64,
-    /// ML-DSA-65 signature by the **principal**, under `AUTH_DELEGATION_V1`.
+    /// ML-DSA-65 signature by the **principal**, under `AUTH_DELEGATION_V1`
+    /// (version 1, no approvers) or `AUTH_DELEGATION_V2` (version 2).
     #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
     pub signature: Vec<u8>,
 }
@@ -224,7 +288,33 @@ impl Delegation {
             None => out.push(0),
         }
 
+        // Version 2 only: the version 1 bytes above, untouched, then the
+        // approvers. An empty list appends nothing, so a delegation without
+        // approvers signs exactly what 0.3 signed.
+        if self.is_v2() {
+            out.extend_from_slice(&(self.bounds.approvers.len() as u32).to_be_bytes());
+            for approver in &self.bounds.approvers {
+                push_len_prefixed(&mut out, approver);
+            }
+        }
+
         out
+    }
+
+    /// Whether this is a version 2 delegation: it names approvers. Content
+    /// alone decides, so there is no version field to disagree with it.
+    pub(crate) fn is_v2(&self) -> bool {
+        !self.bounds.approvers.is_empty()
+    }
+
+    /// The purpose this delegation is signed under: `AUTH_DELEGATION_V1`, or
+    /// `AUTH_DELEGATION_V2` when it names approvers.
+    pub(crate) fn purpose(&self) -> &'static [u8] {
+        if self.is_v2() {
+            AUTH_DELEGATION_V2
+        } else {
+            AUTH_DELEGATION_V1
+        }
     }
 
     /// A stable 32-byte identifier for this delegation, for a relying party's
@@ -233,7 +323,8 @@ impl Delegation {
     ///
     /// `SHAKE-256` over a domain label, the principal key, the signed bytes and
     /// the signature, each length-prefixed. So it is one id per distinct
-    /// signed statement.
+    /// signed statement. The label is `aethel-auth/delegation-id/v1`, or
+    /// `.../v2` for a delegation with approvers.
     ///
     /// # What it is stable over, and what changes it
     ///
@@ -259,7 +350,14 @@ impl Delegation {
     /// is not.
     pub fn id(&self) -> [u8; 32] {
         let mut input = Vec::with_capacity(5_600 + self.audience.len());
-        push_len_prefixed(&mut input, b"aethel-auth/delegation-id/v1");
+        push_len_prefixed(
+            &mut input,
+            if self.is_v2() {
+                b"aethel-auth/delegation-id/v2"
+            } else {
+                b"aethel-auth/delegation-id/v1"
+            },
+        );
         push_len_prefixed(&mut input, &self.principal_key);
         push_len_prefixed(&mut input, &self.signing_input());
         push_len_prefixed(&mut input, &self.signature);
@@ -309,6 +407,10 @@ impl RemainingObligations {
 ///
 /// Verifies the principal's signature over the whole statement, including the
 /// delegate key and every bound, so nothing in it can be altered after signing.
+/// A delegation with approvers is checked under `AUTH_DELEGATION_V2`, one
+/// without under `AUTH_DELEGATION_V1`, so neither can be relabelled as the
+/// other. The approver limits ([`Bounds::approvers`]) are checked before the
+/// signature and refused with [`AuthError::Malformed`].
 pub fn verify_delegation(
     delegation: &Delegation,
     expected_audience: &[u8],
@@ -322,6 +424,8 @@ pub fn verify_delegation(
         return Err(AuthError::Malformed);
     }
 
+    check_approver_limits(delegation)?;
+
     if delegation.audience != expected_audience {
         return Err(AuthError::AudienceMismatch);
     }
@@ -332,7 +436,7 @@ pub fn verify_delegation(
 
     let verified = verify_with_purpose(
         &delegation.principal_key,
-        AUTH_DELEGATION_V1,
+        delegation.purpose(),
         &delegation.signing_input(),
         &delegation.signature,
     )
@@ -345,7 +449,31 @@ pub fn verify_delegation(
     Ok(())
 }
 
+/// The limits on named approvers. Each violation is `Malformed`, and none
+/// needs the signature, so they run first.
+fn check_approver_limits(delegation: &Delegation) -> Result<(), AuthError> {
+    let approvers = &delegation.bounds.approvers;
+    if approvers.len() > MAX_APPROVERS {
+        return Err(AuthError::Malformed);
+    }
+    for (i, a) in approvers.iter().enumerate() {
+        if a.is_empty()
+            || *a == delegation.principal_key
+            || *a == delegation.delegate_key
+            || approvers[..i].contains(a)
+        {
+            return Err(AuthError::Malformed);
+        }
+    }
+    Ok(())
+}
+
 /// Decide whether a delegation authorises a specific attempt.
+///
+/// This is [`VerifiedDelegation::verify`] followed by
+/// [`VerifiedDelegation::authorise`]. A relying party that sees the same
+/// delegation on many requests should keep the [`VerifiedDelegation`] and
+/// re-check it, rather than verify the signature each time.
 ///
 /// - `principals` is the set of principal keys this relying party recognises:
 ///   the accounts it has enrolled, or the one account this request is for. A
@@ -355,6 +483,10 @@ pub fn verify_delegation(
 /// - `revoked` is what this relying party knows about revocation. A
 ///   delegation whose principal or delegate key is in it is refused with
 ///   [`AuthError::Revoked`].
+/// - `revoked_delegations` is the set of delegation ids this relying party has
+///   accepted a [`DelegationRevocation`](crate::DelegationRevocation) for. A
+///   delegation whose [`Delegation::id`] is in it is refused with
+///   [`AuthError::Revoked`], before the signature is checked.
 /// - `delegate_key` is the identity that actually presented a proof, which the
 ///   caller has already authenticated. Checking it against the delegation is
 ///   what stops a valid delegation being used by someone it was not issued to.
@@ -366,63 +498,234 @@ pub fn verify_delegation(
 ///   them is safe. An action that carries no quantity under a bounded
 ///   delegation passes `Some(0)`, which says so.
 #[allow(clippy::too_many_arguments)]
-pub fn authorise<R: RevokedKeys + ?Sized>(
+pub fn authorise<R: RevokedKeys + ?Sized, D: RevokedDelegations + ?Sized>(
     delegation: &Delegation,
     expected_audience: &[u8],
     principals: &[Vec<u8>],
     revoked: &R,
+    revoked_delegations: &D,
     delegate_key: &[u8],
     action: &[u8],
     amount: Option<u128>,
     now: u64,
 ) -> Result<RemainingObligations, AuthError> {
-    // Set membership before the signature: both are cheap, and the public
-    // error is the same for every refusal, so the order tells a prober
-    // nothing.
-    if !principals.contains(&delegation.principal_key) {
-        return Err(AuthError::NotAuthorised);
-    }
-    if revoked.is_revoked(&delegation.principal_key) || revoked.is_revoked(&delegation.delegate_key)
-    {
-        return Err(AuthError::Revoked);
-    }
+    VerifiedDelegation::verify(
+        delegation,
+        expected_audience,
+        principals,
+        revoked,
+        revoked_delegations,
+        now,
+    )?
+    .authorise(
+        expected_audience,
+        revoked,
+        revoked_delegations,
+        delegate_key,
+        action,
+        amount,
+        now,
+    )
+}
 
-    verify_delegation(delegation, expected_audience, now)?;
+/// A delegation that has been verified once, kept so each later request is
+/// re-checked without verifying the signature again.
+///
+/// Build one with [`VerifiedDelegation::verify`], which does everything
+/// [`authorise`] does except the per-attempt checks. Then, for each request,
+/// call [`VerifiedDelegation::authorise`], or [`VerifiedDelegation::recheck`]
+/// when only the standing conditions matter. Both re-check the audience, the
+/// validity window and both revoked sets against what the caller passes *now*,
+/// so a revocation or an expiry after the handle was built still refuses.
+///
+/// It stores no signature, so a re-check is structurally unable to verify one
+/// again: the expensive part happened once, in `verify`.
+///
+/// # Threat model
+///
+/// The handle is a record that *this process* verified a delegation. It is not
+/// a credential:
+///
+/// - It cannot be forged from bytes. It has no public fields, no public
+///   constructor other than `verify`, and no `serde` or `Default`
+///   implementation, so the only way to hold one is to have passed a
+///   delegation through `verify` in this process.
+/// - It cannot be carried to another audience. Every re-check takes the
+///   expected audience and compares it with the one verified.
+/// - It trusts only the process that built it. Do not persist it, send it
+///   over a wire, or share it across a trust boundary: the receiver would be
+///   trusting a claim, not a verification. Send the [`Delegation`] and let the
+///   receiver verify it.
+///
+/// It does not remember the principal set it was verified against. A caller
+/// that keeps a handle past a change to its enrolled principals must drop it.
+///
+/// ```compile_fail
+/// use aethel_auth::VerifiedDelegation;
+///
+/// // A struct literal cannot forge a handle outside this crate.
+/// let forged = VerifiedDelegation {
+///     id: [0u8; 32],
+///     principal_key: vec![1],
+///     delegate_key: vec![2],
+///     audience: vec![3],
+///     bounds: Default::default(),
+///     not_before: 0,
+///     expires_at: u64::MAX,
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct VerifiedDelegation {
+    id: [u8; 32],
+    principal_key: Vec<u8>,
+    delegate_key: Vec<u8>,
+    audience: Vec<u8>,
+    bounds: Bounds,
+    not_before: u64,
+    expires_at: u64,
+}
 
-    if delegation.delegate_key != delegate_key {
-        return Err(AuthError::NotDelegated);
-    }
-
-    if !delegation.bounds.actions.iter().any(|a| a == action) {
-        return Err(AuthError::NotDelegated);
-    }
-
-    let bounds = &delegation.bounds;
-    let sets_an_amount_bound = bounds.max_per_invocation.is_some()
-        || bounds.max_total.is_some()
-        || bounds.approval_required_above.is_some();
-    if amount.is_none() && sets_an_amount_bound {
-        return Err(AuthError::NotDelegated);
-    }
-
-    if let Some(amount) = amount {
-        // An amount against a delegation that set no per-invocation ceiling is
-        // refused. The alternative reading, that an absent ceiling means
-        // unlimited, turns a forgetful principal into an unbounded one.
-        match delegation.bounds.max_per_invocation {
-            Some(ceiling) if amount <= ceiling => {}
-            _ => return Err(AuthError::NotDelegated),
+impl VerifiedDelegation {
+    /// Verify a delegation and keep the result.
+    ///
+    /// Checks, in this order, everything [`authorise`] checks before the
+    /// per-attempt parts: `principals` recognises the principal, neither key
+    /// nor the delegation id is revoked, then [`verify_delegation`] (fields,
+    /// audience, window, signature). Errors are those of [`authorise`].
+    ///
+    /// `principals` is checked here and not again by a re-check, which has no
+    /// such argument.
+    pub fn verify<R: RevokedKeys + ?Sized, D: RevokedDelegations + ?Sized>(
+        delegation: &Delegation,
+        expected_audience: &[u8],
+        principals: &[Vec<u8>],
+        revoked: &R,
+        revoked_delegations: &D,
+        now: u64,
+    ) -> Result<Self, AuthError> {
+        // Set membership before the signature: both are cheap, and the public
+        // error is the same for every refusal, so the order tells a prober
+        // nothing.
+        if !principals.contains(&delegation.principal_key) {
+            return Err(AuthError::NotAuthorised);
         }
+        let id = delegation.id();
+        if revoked.is_revoked(&delegation.principal_key)
+            || revoked.is_revoked(&delegation.delegate_key)
+            || revoked_delegations.is_revoked_delegation(&id)
+        {
+            return Err(AuthError::Revoked);
+        }
+
+        verify_delegation(delegation, expected_audience, now)?;
+
+        Ok(Self {
+            id,
+            principal_key: delegation.principal_key.clone(),
+            delegate_key: delegation.delegate_key.clone(),
+            audience: delegation.audience.clone(),
+            bounds: delegation.bounds.clone(),
+            not_before: delegation.not_before,
+            expires_at: delegation.expires_at,
+        })
     }
 
-    let human_approval_required = match (amount, delegation.bounds.approval_required_above) {
-        (Some(amount), Some(threshold)) => amount > threshold,
-        _ => false,
-    };
+    /// Re-check the conditions that can change after `verify`: the audience,
+    /// the validity window, and both revoked sets. Never verifies a signature.
+    ///
+    /// Errors: [`AuthError::AudienceMismatch`] for another audience,
+    /// [`AuthError::Expired`] outside the window (as [`verify_delegation`]
+    /// reports it), [`AuthError::Revoked`] if the principal key, the delegate
+    /// key or the delegation id is revoked.
+    pub fn recheck<R: RevokedKeys + ?Sized, D: RevokedDelegations + ?Sized>(
+        &self,
+        expected_audience: &[u8],
+        revoked: &R,
+        revoked_delegations: &D,
+        now: u64,
+    ) -> Result<(), AuthError> {
+        if self.audience != expected_audience {
+            return Err(AuthError::AudienceMismatch);
+        }
+        if now < self.not_before || now >= self.expires_at {
+            return Err(AuthError::Expired);
+        }
+        if revoked.is_revoked(&self.principal_key)
+            || revoked.is_revoked(&self.delegate_key)
+            || revoked_delegations.is_revoked_delegation(&self.id)
+        {
+            return Err(AuthError::Revoked);
+        }
+        Ok(())
+    }
 
-    Ok(RemainingObligations {
-        cumulative_ceiling: delegation.bounds.max_total,
-        window_secs: delegation.bounds.window_secs,
-        human_approval_required,
-    })
+    /// Decide whether this delegation authorises a specific attempt: a
+    /// [`recheck`](Self::recheck), then the per-attempt checks. The arguments
+    /// `delegate_key`, `action` and `amount` mean what they do for the free
+    /// [`authorise`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn authorise<R: RevokedKeys + ?Sized, D: RevokedDelegations + ?Sized>(
+        &self,
+        expected_audience: &[u8],
+        revoked: &R,
+        revoked_delegations: &D,
+        delegate_key: &[u8],
+        action: &[u8],
+        amount: Option<u128>,
+        now: u64,
+    ) -> Result<RemainingObligations, AuthError> {
+        self.recheck(expected_audience, revoked, revoked_delegations, now)?;
+
+        if self.delegate_key != delegate_key {
+            return Err(AuthError::NotDelegated);
+        }
+
+        if !self.bounds.actions.iter().any(|a| a == action) {
+            return Err(AuthError::NotDelegated);
+        }
+
+        let bounds = &self.bounds;
+        let sets_an_amount_bound = bounds.max_per_invocation.is_some()
+            || bounds.max_total.is_some()
+            || bounds.approval_required_above.is_some();
+        if amount.is_none() && sets_an_amount_bound {
+            return Err(AuthError::NotDelegated);
+        }
+
+        if let Some(amount) = amount {
+            // An amount against a delegation that set no per-invocation ceiling is
+            // refused. The alternative reading, that an absent ceiling means
+            // unlimited, turns a forgetful principal into an unbounded one.
+            match bounds.max_per_invocation {
+                Some(ceiling) if amount <= ceiling => {}
+                _ => return Err(AuthError::NotDelegated),
+            }
+        }
+
+        let human_approval_required = match (amount, bounds.approval_required_above) {
+            (Some(amount), Some(threshold)) => amount > threshold,
+            _ => false,
+        };
+
+        Ok(RemainingObligations {
+            cumulative_ceiling: bounds.max_total,
+            window_secs: bounds.window_secs,
+            human_approval_required,
+        })
+    }
+
+    /// The [`Delegation::id`] of the verified delegation.
+    pub fn id(&self) -> [u8; 32] {
+        self.id
+    }
+
+    /// The principal's public key.
+    pub fn principal_key(&self) -> &[u8] {
+        &self.principal_key
+    }
+
+    /// The delegate's public key.
+    pub fn delegate_key(&self) -> &[u8] {
+        &self.delegate_key
+    }
 }

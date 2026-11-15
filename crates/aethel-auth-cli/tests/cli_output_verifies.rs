@@ -106,8 +106,13 @@ fn a_login_proof_from_the_cli_verifies() {
     ]);
     let proof: LoginProof = serde_json::from_str(&stdout).expect("cli emits a LoginProof");
 
-    let out = block_on(verify_login(&proof, params(), &InMemoryNonceStore::new()))
-        .expect("the shipped verifier accepts what the shipped signer produced");
+    let out = block_on(verify_login(
+        &proof,
+        params(),
+        &[] as &[Vec<u8>],
+        &InMemoryNonceStore::new(),
+    ))
+    .expect("the shipped verifier accepts what the shipped signer produced");
 
     assert_eq!(out.strength, AuthStrength::Proven);
     assert!(
@@ -214,7 +219,13 @@ fn an_identity_is_bound_to_one_audience() {
         max_age_secs: 300,
     };
     assert!(
-        block_on(verify_login(&proof, elsewhere, &InMemoryNonceStore::new())).is_err(),
+        block_on(verify_login(
+            &proof,
+            elsewhere,
+            &[] as &[Vec<u8>],
+            &InMemoryNonceStore::new()
+        ))
+        .is_err(),
         "there is no flag that would let one identity act at a second service"
     );
 }

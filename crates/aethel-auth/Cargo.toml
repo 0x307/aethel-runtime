@@ -1,6 +1,6 @@
 [package]
 name = "aethel-auth"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.87"
 description = "Delegated authority for post-quantum agent identities: per-request login proofs, bounded delegation, step-up approval, and succession and revocation statements over aethel-core's ML-DSA-65 identities. Verifier-first: the default build is verification only, with no WASM runtime, wallet or classical asymmetric crypto."
@@ -143,3 +143,23 @@ required-features = ["holder"]
 name = "login_patterns"
 path = "tests/login_patterns.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "gen_vectors"
+path = "tests/gen_vectors.rs"
+required-features = ["holder", "serde"]
+
+[[test]]
+name = "wire_binary"
+path = "tests/wire_binary.rs"
+required-features = ["holder", "serde"]
+
+[[test]]
+name = "delegation_revocation"
+path = "tests/delegation_revocation.rs"
+required-features = ["holder"]
+
+[[test]]
+name = "named_approvers"
+path = "tests/named_approvers.rs"
+required-features = ["holder", "serde"]
