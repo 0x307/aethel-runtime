@@ -164,7 +164,7 @@ audit and stability standard.
 | [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes | none in the family |
 | [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) | none in the family |
 | [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing | pqc-sig 0.5 |
-| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Production | Delegated authority for agent identities: login proofs, bounded delegation, step-up approval, revocation | aethel-core 0.7 |
+| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Preview | Delegated authority for agent identities: login proofs, bounded delegation, step-up approval, revocation | aethel-core 0.7 |
 | [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start | pqc-sig 0.5 (aethel-core 0.7 vendored) |
 | [erand-nats](https://crates.io/crates/erand-nats) | Preview | A post-quantum NATS client inside a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
 | [witan](https://crates.io/crates/witan) | Preview | Post-quantum gossip engine with message-level authentication, as a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
