@@ -141,7 +141,7 @@ With `serde`, byte fields are base64url text, and decoding is strict. Only the c
 
 ## Version policy
 
-- **We never yank.** A security defect is fixed forward in a new release and reported as a RustSec advisory, so `cargo audit` and `cargo deny` flag the affected versions.
+- **Fix forward, and yank only with a recorded reason.** A fix ships as a new release, and a security fix also gets a RustSec advisory, so `cargo audit` and `cargo deny` flag the affected versions. A security bug alone is not a reason to yank. A version is yanked only when it can't be installed or would mislead, with the reason in `CHANGELOG.md`.
 - **More than one line may be live.** A line is a `0.x` minor series, such as `0.1`.
 - **A legacy line gets 6 months of security patches**, starting the day its successor line ships.
 - **After the window, the line is unsupported.** It gets no more fixes. Every version stays downloadable.
@@ -156,20 +156,22 @@ The full policy is the family's [STABILITY.md](https://github.com/0x307/aethel-r
 
 ## The 0x307 crate family
 
-`aethel-auth` is one of seven open-source crates from [0x307](https://0x307.com/crates), held to one
+`aethel-auth` is one of nine open-source crates from [0x307](https://0x307.com/crates), held to one
 audit and stability standard.
 
-| Crate | Tier | What it does |
-|---|---|---|
-| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) |
-| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes |
-| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing |
-| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start |
-| [aethel-vault](https://crates.io/crates/aethel-vault) | Preview | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records |
-| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Preview | Delegated authority for agents: bounded, revocable delegation and per-request proofs a relying party verifies |
-| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path |
+| Crate | Tier | What it does | Builds on |
+|---|---|---|---|
+| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes | none in the family |
+| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) | none in the family |
+| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing | pqc-sig 0.5 |
+| [aethel-auth](https://crates.io/crates/aethel-auth) (this crate) | Production | Delegated authority for agent identities: login proofs, bounded delegation, step-up approval, revocation | aethel-core 0.7 |
+| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start | pqc-sig 0.5 (aethel-core 0.7 vendored) |
+| [erand-nats](https://crates.io/crates/erand-nats) | Preview | A post-quantum NATS client inside a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [witan](https://crates.io/crates/witan) | Preview | Post-quantum gossip engine with message-level authentication, as a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [aethel-vault](https://crates.io/crates/aethel-vault) | Lab | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records | aethel-core 0.7 |
+| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path | pqc-kem 0.3, pqc-sig 0.5 |
 
-**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research, never on an identity or payment path.
+**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research and experiments: try them, but keep them off a production identity or payment path.
 
 **Runnable examples:** [0x307/examples](https://github.com/0x307/examples), one program per
 crate, pinned to the published versions.

@@ -50,6 +50,12 @@ without you changing anything.
 - Internal refactors with no change to the public surface
 - Documentation changes
 
+**Security exception.** A fix for a security defect can ship in a patch release even when it
+falls under "Breaking" above, if the alternative is leaving the defect in the supported line.
+That covers refusing input that is unsafe to accept (a low-order key, say) and raising the MSRV
+because a dependency's security fix needs a newer compiler. The changelog entry names the rule
+it breaks and why, and the change is never used for anything that isn't the fix.
+
 **If it's ambiguous which side of this a change falls on, it's treated as breaking.** That's
 the conservative default this policy exists to give you — the cost of an unnecessary minor
 version bump is much lower than the cost of a silent break.
@@ -102,9 +108,21 @@ early. The floor is what's meant to hold indefinitely, including through a slow 
 
 ### Version policy
 
-- **We never yank.** Not for a bug, not for a security defect, not to move people to a newer
-  release. A security defect is fixed forward in a new release and reported as a RustSec
-  advisory, so `cargo audit` and `cargo deny` flag the affected versions.
+- **Fix forward, and yank only with a recorded reason.** A fix ships as a new release. A
+  security fix also gets a [RustSec](https://rustsec.org/) advisory that names the affected
+  versions and the fixed one, so `cargo audit` and `cargo deny` flag the affected versions in
+  your build and you learn about the problem and the fix together. A security bug alone is not
+  a reason to yank.
+- **A version is yanked only when it can't be installed or would mislead.** It can't be
+  installed when it fails to build or resolve for a consumer. It would mislead when its
+  published code or README describes behaviour it doesn't have, in a way a consumer would act
+  on. Each yank gets one line in the crate's `CHANGELOG.md`, under "Yanked versions", giving
+  the reason (for `aethel-auth`, [`crates/aethel-auth/CHANGELOG.md`](./crates/aethel-auth/CHANGELOG.md#yanked-versions)).
+  A yanked version still resolves from an existing `Cargo.lock`, so nothing already built
+  breaks; new resolutions skip it.
+- **The gates that keep a release from needing a yank are in CI:** for `aethel-auth`, the wire
+  tests (`tests/wire_json.rs`, `tests/compat_f43ef88.rs`) and a build of the packaged `.crate`
+  itself.
 - **More than one line may be live.** A line is a `0.x` minor series, such as `0.3`. When a
   dependency forces a breaking release, the old line can stay in use alongside the new one.
 - **A legacy line gets 6 months of security patches.** The window starts on the day its

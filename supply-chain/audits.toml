@@ -1,0 +1,38 @@
+# cargo-vet audits for aethel-auth's own released versions.
+#
+# Written by hand in cargo-vet's audits.toml format (cargo vet was not
+# installed where this was prepared), in the same shape as pqc-sig's. It holds
+# audits only; this repo does not run `cargo vet` on its own dependencies
+# yet, so there is no config.toml or imports.lock beside it.
+#
+# To trust these audits from your own project, add to your
+# supply-chain/config.toml:
+#
+#   [imports.0x307-aethel-auth]
+#   url = "https://raw.githubusercontent.com/0x307/aethel-runtime/main/supply-chain/audits.toml"
+#
+# What an entry means: the maintainer has reviewed that published version in
+# full (it is the maintainer's own code) against cargo-vet's built-in
+# criteria. It is not an independent third-party audit; see the README's
+# "Audit status". It covers aethel-auth's own code, not its dependencies. The
+# criteria is safe-to-run, not safe-to-deploy: the crate has not had an
+# external review. A new entry is added when each version is published. No
+# aethel-auth version is yanked.
+
+[[audits.aethel-auth]]
+who = "Ed Johnson <165963846+eljay179@users.noreply.github.com>"
+criteria = "safe-to-run"
+version = "0.1.0"
+notes = "Maintainer's own release. Pure Rust verifier over aethel-core's ML-DSA-65 identities; the default build holds no secret. Not externally reviewed."
+
+[[audits.aethel-auth]]
+who = "Ed Johnson <165963846+eljay179@users.noreply.github.com>"
+criteria = "safe-to-run"
+delta = "0.1.0 -> 0.2.0"
+notes = "Maintainer's own release. Not externally reviewed."
+
+[[audits.aethel-auth]]
+who = "Ed Johnson <165963846+eljay179@users.noreply.github.com>"
+criteria = "safe-to-run"
+delta = "0.2.0 -> 0.3.0"
+notes = "Maintainer's own release. The approval becomes its own signed statement, and the nonce store's keys and retention change. Not externally reviewed."
