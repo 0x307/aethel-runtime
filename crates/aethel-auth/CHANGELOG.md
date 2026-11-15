@@ -3,6 +3,27 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Canonical binary encoding.** `Delegation`, `LoginProof` and `Approval`
+  each have `to_bytes()` and `from_bytes(&[u8]) -> Result<Self, AuthError>`.
+  The layout is a type tag, a version, then the signer key, the exact
+  `signing_input()` and the signature, each with a `u32` BE length (see the
+  `wire` module). Decoding is strict (trailing bytes, unknown tag or version,
+  a length past the end, a wrong-size nonce or digest, a bad option flag are
+  all `Malformed`), canonical in both directions, and never allocates from an
+  unchecked length. `from_bytes` checks structure only, never the signature.
+  JSON stays supported.
+- Test vectors in `tests/vectors/`: `wire_v1.json` (two values per type) and
+  `v0_3_delegations.json`, recorded from the 0.3.1 code before any 0.4 change.
+
+### Migration
+
+- 0.3 JSON still decodes, and the `id()`, `signing_input()` and signature of
+  every 0.3 value are unchanged. Nothing is required of an existing caller.
+
 ## [0.3.1] - Unreleased
 
 Docs, tests and CI only. No change to the public API, to any signed bytes or

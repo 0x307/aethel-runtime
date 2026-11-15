@@ -148,3 +148,8 @@ required-features = ["holder"]
 name = "gen_vectors"
 path = "tests/gen_vectors.rs"
 required-features = ["holder", "serde"]
+
+[[test]]
+name = "wire_binary"
+path = "tests/wire_binary.rs"
+required-features = ["holder", "serde"]

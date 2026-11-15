@@ -97,6 +97,7 @@ pub mod error;
 pub mod nonce;
 pub mod proof;
 pub mod statements;
+pub mod wire;
 
 pub use approval::{check_approval, Approval};
 pub use delegation::{

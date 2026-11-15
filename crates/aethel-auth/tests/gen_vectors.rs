@@ -92,3 +92,24 @@ fn generate_v0_3_delegations() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/v0_3_delegations.json");
     std::fs::write(path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
 }
+
+mod common;
+
+#[test]
+#[ignore = "writes tests/vectors/wire_v1.json; run on purpose"]
+fn generate_wire_v1() {
+    let entries: Vec<serde_json::Value> = common::values()
+        .into_iter()
+        .map(|(name, kind, v)| {
+            serde_json::json!({ "name": name, "type": kind, "hex": common::hex(&v.to_bytes()) })
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "wire_version": 1,
+        "principal_seed_byte": "0x11 repeated 32 times",
+        "delegate_seed_byte": "0x22 repeated 32 times",
+        "vectors": entries,
+    });
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/wire_v1.json");
+    std::fs::write(path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+}
