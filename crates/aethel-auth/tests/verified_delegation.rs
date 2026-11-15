@@ -344,8 +344,7 @@ fn the_handle_authorise_equals_the_free_authorise() {
 
     let own = [principal.public_key()];
     let other = [stranger.public_key()];
-    let principal_sets: [(&str, &[Vec<u8>]); 3] =
-        [("own", &own), ("other", &other), ("none", &[])];
+    let principal_sets: [(&str, &[Vec<u8>]); 3] = [("own", &own), ("other", &other), ("none", &[])];
 
     let pk = principal.public_key();
     let dk = delegate.public_key();
@@ -479,7 +478,8 @@ fn the_handle_authorise_reports_the_same_obligations() {
 fn the_handle_authorise_rechecks_revocation_at_each_call() {
     let f = fixture();
     let dk = f.delegate.public_key();
-    let _ = f.handle
+    let _ = f
+        .handle
         .authorise(AUDIENCE, NO_KEYS, NO_IDS, &dk, b"transfer", Some(1), NOW)
         .expect("control");
     let ids = [f.d.id()];

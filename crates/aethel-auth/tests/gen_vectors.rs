@@ -92,7 +92,10 @@ fn generate_v0_3_delegations() {
         "delegations": entries,
     });
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/v0_3_delegations.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/vectors/v0_3_delegations.json"
+    );
     std::fs::write(path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
 }
 

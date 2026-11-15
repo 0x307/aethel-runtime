@@ -347,11 +347,7 @@ impl LoginProof {
             _ => return Err(AuthError::Malformed),
         };
 
-        let request_digest = if s.is_empty() {
-            None
-        } else {
-            Some(s.lp32()?)
-        };
+        let request_digest = if s.is_empty() { None } else { Some(s.lp32()?) };
         s.finish()?;
 
         Ok(LoginProof {
