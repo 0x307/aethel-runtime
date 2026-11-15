@@ -101,7 +101,8 @@ pub mod wire;
 
 pub use approval::{check_approval, Approval};
 pub use delegation::{
-    authorise, verify_delegation, Bounds, Delegation, RemainingObligations, RevokedKeys,
+    authorise, verify_delegation, Bounds, Delegation, RemainingObligations, RevokedDelegations,
+    RevokedKeys,
 };
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]
@@ -113,7 +114,8 @@ pub use proof::{
     MAX_AGE_CEILING_SECS, NONCE_SKEW_SECS,
 };
 pub use statements::{
-    retired_key, verify_revocation, verify_succession, Revocation, RevokedBy, Succession,
+    retired_key, verify_delegation_revocation, verify_revocation, verify_succession,
+    DelegationRevocation, Revocation, RevokedBy, Succession,
 };
 
 /// Re-exported so consumers verify under the same registry entries this crate
@@ -146,6 +148,12 @@ pub mod purposes {
     /// delegation. Distinct from [`AUTH_STEP_UP_V1`], so a general
     /// "confirm it's you" step-up can never stand in for an approval.
     pub const AUTH_APPROVAL_V1: &[u8] = b"aethel-auth/approval/v1";
+
+    /// A principal's [`crate::DelegationRevocation`]: one delegation ended,
+    /// the principal's others left standing. Distinct from
+    /// [`AUTH_REVOCATION_V1`], so a key revocation can never be read as one of
+    /// these, or the reverse.
+    pub const AUTH_DELEGATION_REVOCATION_V1: &[u8] = b"aethel-auth/delegation-revocation/v1";
 }
 
 #[cfg(test)]
@@ -363,6 +371,7 @@ version = \"0.13\"
             AUTH_REVOCATION_V1,
             AUTH_DELEGATION_V1,
             AUTH_APPROVAL_V1,
+            AUTH_DELEGATION_REVOCATION_V1,
         ];
 
         // A purpose defined here must not repeat any registered in aethel-core
@@ -382,6 +391,13 @@ version = \"0.13\"
                 .any(|(_, b)| *b == AUTH_APPROVAL_V1),
             "AUTH_APPROVAL_V1 is not in aethel-core's registry; if it is added there, \
              re-export it instead of defining it here"
+        );
+        assert!(
+            !aethel_core::signing::purpose::ALL
+                .iter()
+                .any(|(_, b)| *b == AUTH_DELEGATION_REVOCATION_V1),
+            "AUTH_DELEGATION_REVOCATION_V1 is not in aethel-core's registry; if it is added \
+             there, re-export it instead of defining it here"
         );
 
         for (i, a) in all.iter().enumerate() {

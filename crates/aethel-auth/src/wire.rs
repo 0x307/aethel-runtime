@@ -1,6 +1,6 @@
 //! Canonical binary encoding of the signed statements.
 //!
-//! [`Delegation`], [`LoginProof`] and [`Approval`] each have
+//! [`Delegation`], [`LoginProof`], [`Approval`] and [`DelegationRevocation`] each have
 //! `to_bytes` and `from_bytes`. JSON stays supported; this is the compact
 //! form for a transport that carries bytes, and it has exactly one encoding
 //! per value.
@@ -10,18 +10,20 @@
 //! The same for every type:
 //!
 //! ```text
-//! type_tag   u8        0x01 Delegation, 0x02 LoginProof, 0x03 Approval
+//! type_tag   u8        0x01 Delegation, 0x02 LoginProof, 0x03 Approval,
+//!                      0x04 DelegationRevocation
 //! version    u8        0x01
 //! signer     u32 BE length ‖ bytes    the key the signature verifies under
 //!                                     (Delegation: principal_key;
 //!                                      LoginProof: public_key;
-//!                                      Approval: principal_key)
+//!                                      Approval: principal_key;
+//!                                      DelegationRevocation: principal_key)
 //! signed     u32 BE length ‖ bytes    exactly `signing_input()`
 //! signature  u32 BE length ‖ bytes
 //! ```
 //!
-//! `0x04` is reserved for a later statement and version `0x02` for a later
-//! delegation format. Both are refused today, as is any other tag or version.
+//! Version `0x02` is reserved for a later delegation format. It is refused
+//! today, as is any other tag or version.
 //!
 //! The `signed` block is the type's own `signing_input()`, byte for byte, so
 //! the bytes a signature covers are visible inside the encoding and nothing
@@ -52,6 +54,7 @@ use crate::approval::Approval;
 use crate::delegation::{Bounds, Delegation};
 use crate::error::AuthError;
 use crate::proof::{push_len_prefixed, LoginProof};
+use crate::statements::DelegationRevocation;
 
 /// Type tag of an encoded [`Delegation`].
 pub const TAG_DELEGATION: u8 = 0x01;
@@ -59,6 +62,8 @@ pub const TAG_DELEGATION: u8 = 0x01;
 pub const TAG_LOGIN_PROOF: u8 = 0x02;
 /// Type tag of an encoded [`Approval`].
 pub const TAG_APPROVAL: u8 = 0x03;
+/// Type tag of an encoded [`DelegationRevocation`].
+pub const TAG_DELEGATION_REVOCATION: u8 = 0x04;
 /// The only wire version this release reads and writes.
 pub const WIRE_VERSION_1: u8 = 0x01;
 
@@ -356,6 +361,42 @@ impl Approval {
             nonce,
             issued_at,
             expires_at,
+            signature: env.signature.to_vec(),
+        })
+    }
+}
+
+impl DelegationRevocation {
+    /// The canonical binary encoding: tag `0x04`, version `0x01`, the
+    /// principal key, [`DelegationRevocation::signing_input`] and the
+    /// signature, each length-prefixed. See [`crate::wire`] for the layout.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        write_envelope(
+            TAG_DELEGATION_REVOCATION,
+            &self.principal_key,
+            &self.signing_input(),
+            &self.signature,
+        )
+    }
+
+    /// Read a delegation revocation from its canonical binary encoding.
+    ///
+    /// Returns [`AuthError::Malformed`] for any defect; see [`crate::wire`]
+    /// for the list. **This checks structure only, never the signature.**
+    /// Pass the result to [`crate::verify_delegation_revocation`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {
+        let env = read_envelope(bytes, TAG_DELEGATION_REVOCATION)?;
+        let mut s = Reader::new(env.signed);
+        let audience = s.lp()?.to_vec();
+        let delegation_id = s.lp32()?;
+        let issued_at = s.u64()?;
+        s.finish()?;
+
+        Ok(DelegationRevocation {
+            principal_key: env.signer.to_vec(),
+            audience,
+            delegation_id,
+            issued_at,
             signature: env.signature.to_vec(),
         })
     }

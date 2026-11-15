@@ -41,10 +41,10 @@ use crate::approval::Approval;
 use crate::delegation::{Bounds, Delegation};
 use crate::proof::{LoginProof, StepUpProof};
 use crate::purposes::{
-    AUTH_APPROVAL_V1, AUTH_DELEGATION_V1, AUTH_LOGIN_V1, AUTH_REVOCATION_V1, AUTH_STEP_UP_V1,
-    AUTH_SUCCESSION_V1,
+    AUTH_APPROVAL_V1, AUTH_DELEGATION_REVOCATION_V1, AUTH_DELEGATION_V1, AUTH_LOGIN_V1,
+    AUTH_REVOCATION_V1, AUTH_STEP_UP_V1, AUTH_SUCCESSION_V1,
 };
-use crate::statements::{Revocation, RevokedBy, Succession};
+use crate::statements::{DelegationRevocation, Revocation, RevokedBy, Succession};
 
 /// An identity, and the one relying party it acts at.
 pub struct Holder<'a> {
@@ -210,6 +210,43 @@ impl<'a> Holder<'a> {
         };
         delegation.signature = self.sign(AUTH_DELEGATION_V1, &delegation.signing_input());
         delegation
+    }
+
+    /// End one delegation this identity granted, leaving its others standing.
+    ///
+    /// Signs a [`DelegationRevocation`] naming `delegation` by id, under
+    /// `AUTH_DELEGATION_REVOCATION_V1`. The relying party checks it with
+    /// [`crate::verify_delegation_revocation`] and then adds
+    /// [`Delegation::id`] to the `revoked_delegations` it passes to
+    /// [`crate::authorise`] and [`crate::check_approval`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if this holder's key is not the delegation's `principal_key`: only
+    /// the principal can revoke a delegation, and a statement
+    /// signed by anyone else would be refused by every verifier. Failing here
+    /// puts the mistake at the call that made it. (The other builders cannot
+    /// be misused this way, so none of them has a `Result` to follow; this
+    /// one panics rather than invent one.)
+    pub fn revoke_delegation(
+        &self,
+        delegation: &Delegation,
+        issued_at: u64,
+    ) -> DelegationRevocation {
+        assert!(
+            self.public_key() == delegation.principal_key,
+            "only the delegation's principal can revoke it"
+        );
+        let mut revocation = DelegationRevocation {
+            principal_key: self.public_key(),
+            audience: self.audience.clone(),
+            delegation_id: delegation.id(),
+            issued_at,
+            signature: Vec::new(),
+        };
+        revocation.signature =
+            self.sign(AUTH_DELEGATION_REVOCATION_V1, &revocation.signing_input());
+        revocation
     }
 
     /// End this identity's own authority at this relying party.

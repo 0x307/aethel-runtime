@@ -5,6 +5,16 @@ All notable changes to this crate are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Breaking
+
+- **`authorise` and `check_approval` take `revoked_delegations`.** A new
+  argument `revoked_delegations: &D where D: RevokedDelegations + ?Sized`,
+  directly after `revoked: &R`. A delegation whose `id()` is in it is refused
+  with `AuthError::Revoked`, checked beside the key check and before the
+  signature. A relying party that has accepted no delegation revocation passes
+  `&[] as &[[u8; 32]]`. 0.3 callers add that one argument; no signed byte, id
+  or JSON changes.
+
 ### Added
 
 - **Canonical binary encoding.** `Delegation`, `LoginProof` and `Approval`
@@ -16,13 +26,28 @@ All notable changes to this crate are documented here. Format loosely follows
   all `Malformed`), canonical in both directions, and never allocates from an
   unchecked length. `from_bytes` checks structure only, never the signature.
   JSON stays supported.
+- **Revoke one delegation by id.** `DelegationRevocation` (principal key,
+  audience, delegation id, `issued_at`, signature), signed under the new
+  purpose `purposes::AUTH_DELEGATION_REVOCATION_V1`, with
+  `verify_delegation_revocation(&rev, &delegation, expected_audience)`. Only
+  the delegation's principal can sign one: a delegate or an authority gets
+  `NotAuthorised`. It has no time cutoff, and it ends that delegation without
+  touching the principal's others (a key `Revocation` ends all of them). It has
+  binary tag `0x04`, version `0x01`, and serde like the other statements.
+- **`RevokedDelegations`**, the relying party's set of revoked delegation ids,
+  implemented for `[[u8; 32]]` and for `Fn(&[u8; 32]) -> bool`, mirroring
+  `RevokedKeys`.
+- **`Holder::revoke_delegation(&delegation, issued_at)`** (behind `holder`).
+  Panics, as documented, if the holder is not the delegation's principal.
 - Test vectors in `tests/vectors/`: `wire_v1.json` (two values per type) and
   `v0_3_delegations.json`, recorded from the 0.3.1 code before any 0.4 change.
+  `wire_v1.json` also holds two `DelegationRevocation` values.
 
 ### Migration
 
 - 0.3 JSON still decodes, and the `id()`, `signing_input()` and signature of
-  every 0.3 value are unchanged. Nothing is required of an existing caller.
+  every 0.3 value are unchanged. The one source change a 0.3 caller needs is
+  the extra `revoked_delegations` argument to `authorise` and `check_approval`.
 
 ## [0.3.1] - Unreleased
 

@@ -153,3 +153,8 @@ required-features = ["holder", "serde"]
 name = "wire_binary"
 path = "tests/wire_binary.rs"
 required-features = ["holder", "serde"]
+
+[[test]]
+name = "delegation_revocation"
+path = "tests/delegation_revocation.rs"
+required-features = ["holder"]

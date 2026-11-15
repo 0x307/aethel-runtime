@@ -37,9 +37,10 @@
 
 use aethel_core::signing::verify_with_purpose;
 
+use crate::delegation::Delegation;
 use crate::error::AuthError;
 use crate::proof::push_len_prefixed;
-use crate::purposes::{AUTH_REVOCATION_V1, AUTH_SUCCESSION_V1};
+use crate::purposes::{AUTH_DELEGATION_REVOCATION_V1, AUTH_REVOCATION_V1, AUTH_SUCCESSION_V1};
 
 /// Who ended an identity's authority.
 ///
@@ -263,4 +264,103 @@ pub fn retired_key(
 ) -> Result<Vec<u8>, AuthError> {
     verify_succession(succession, expected_audience)?;
     Ok(succession.from_key.clone())
+}
+
+/// A signed statement that one delegation has ended.
+///
+/// Ends a single [`Delegation`] and leaves every other delegation of the same
+/// principal standing, which a key [`Revocation`] cannot do. The relying party
+/// verifies it with [`verify_delegation_revocation`], then adds the
+/// delegation's id to the set it passes to [`crate::authorise`] and
+/// [`crate::check_approval`] as `revoked_delegations`
+/// ([`crate::RevokedDelegations`]).
+///
+/// Only the delegation's **principal** can sign one. Like every revocation
+/// here it only ever removes authority, so there is no path by which it
+/// grants any.
+///
+/// Signed under its own purpose,
+/// [`AUTH_DELEGATION_REVOCATION_V1`],
+/// so it can never be read as a key [`Revocation`], or the reverse.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegationRevocation {
+    /// The key that signs this statement: the delegation's principal.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
+    pub principal_key: Vec<u8>,
+    /// The relying party this applies at. A revocation is not a broadcast.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
+    pub audience: Vec<u8>,
+    /// [`Delegation::id`] of the delegation being ended.
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::array32"))]
+    pub delegation_id: [u8; 32],
+    /// Unix seconds the statement was made. Informational: there is no time
+    /// cutoff, and a revocation holds from the moment a relying party accepts
+    /// it.
+    pub issued_at: u64,
+    /// ML-DSA-65 signature by `principal_key`, under
+    /// [`AUTH_DELEGATION_REVOCATION_V1`].
+    #[cfg_attr(feature = "serde", serde(with = "crate::b64::bytes"))]
+    pub signature: Vec<u8>,
+}
+
+impl DelegationRevocation {
+    /// The exact bytes the signature covers: the audience and the delegation
+    /// id, each length-prefixed, then `issued_at`. The signer's own key is
+    /// bound by verification, as in [`Revocation`].
+    pub fn signing_input(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(64 + self.audience.len());
+        push_len_prefixed(&mut out, &self.audience);
+        push_len_prefixed(&mut out, &self.delegation_id);
+        out.extend_from_slice(&self.issued_at.to_be_bytes());
+        out
+    }
+}
+
+/// Check that a revocation of one delegation is genuine, for this relying
+/// party, and signed by that delegation's principal.
+///
+/// Checks, in this order: no field is empty; the revocation's audience, the
+/// relying party's `expected_audience` and the delegation's audience all agree
+/// ([`AuthError::AudienceMismatch`]); the revocation names this delegation by
+/// id and is signed by its principal ([`AuthError::NotAuthorised`]); and the
+/// signature, under its own purpose ([`AuthError::BadSignature`]).
+///
+/// There is **no time cutoff**, and the delegation need not be live: once a
+/// relying party accepts a revocation it holds from then on, including for a
+/// delegation that has since expired.
+///
+/// A delegate, an authority and an approver cannot revoke a delegation: only
+/// the principal's key passes the third check. After this returns `Ok`, put
+/// `delegation.id()` in the set passed as `revoked_delegations`.
+pub fn verify_delegation_revocation(
+    rev: &DelegationRevocation,
+    delegation: &Delegation,
+    expected_audience: &[u8],
+) -> Result<(), AuthError> {
+    if rev.principal_key.is_empty() || rev.audience.is_empty() || rev.signature.is_empty() {
+        return Err(AuthError::Malformed);
+    }
+
+    if rev.audience != expected_audience || delegation.audience != expected_audience {
+        return Err(AuthError::AudienceMismatch);
+    }
+
+    if rev.delegation_id != delegation.id() || rev.principal_key != delegation.principal_key {
+        return Err(AuthError::NotAuthorised);
+    }
+
+    let verified = verify_with_purpose(
+        &rev.principal_key,
+        AUTH_DELEGATION_REVOCATION_V1,
+        &rev.signing_input(),
+        &rev.signature,
+    )
+    .map_err(|_| AuthError::Malformed)?;
+
+    if !verified {
+        return Err(AuthError::BadSignature);
+    }
+
+    Ok(())
 }

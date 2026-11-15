@@ -38,19 +38,22 @@
 //!
 //! # Ending a delegation
 //!
-//! A delegation ends at `expires_at`, or when the relying party stops
-//! honouring one of its two keys. This release has no statement that revokes
-//! one delegation and leaves the principal's others standing. A principal
-//! ends its delegates' authority at a relying party by revoking **its own**
-//! key there (`Holder::revoke_self`, behind the `holder` feature), which ends
-//! every delegation it issued at that relying party.
+//! A delegation ends at `expires_at`, when the relying party stops honouring
+//! one of its two keys, or when its principal revokes it by id.
 //!
-//! So a relying party must refuse a delegation whose `principal_key` or
-//! `delegate_key` it has seen a verified revocation for. The set of revoked
-//! keys is the relying party's state, so [`authorise`] takes it as an input
-//! ([`RevokedKeys`]) and refuses either key in it. A caller cannot reach
-//! "authorised" without saying what it knows about revocation.
-//! [`Delegation::id`] gives it a stable key to track a delegation by, for the
+//! A principal ends **one** delegation with a
+//! [`DelegationRevocation`](crate::DelegationRevocation) (`Holder::revoke_delegation`,
+//! behind the `holder` feature), which leaves its other delegations standing.
+//! It ends **all** its delegates' authority at a relying party by revoking its
+//! own key there (`Holder::revoke_self`).
+//!
+//! The revoked keys and the revoked delegation ids are the relying party's
+//! state, so [`authorise`] takes both as inputs ([`RevokedKeys`] and
+//! [`RevokedDelegations`]) and refuses a delegation whose `principal_key` or
+//! `delegate_key` is in the first, or whose [`Delegation::id`] is in the
+//! second. A caller cannot reach "authorised" without saying what it knows
+//! about revocation. [`Delegation::id`] is also the stable key to track a
+//! delegation by, for the running total.
 //! running total.
 //!
 //! # Whose delegation it is
@@ -113,6 +116,34 @@ impl<S: core::hash::BuildHasher> RevokedKeys for std::collections::HashSet<Vec<u
 impl RevokedKeys for std::collections::BTreeSet<Vec<u8>> {
     fn is_revoked(&self, public_key: &[u8]) -> bool {
         self.contains(public_key)
+    }
+}
+
+/// The delegations this relying party has seen a verified
+/// [`DelegationRevocation`](crate::DelegationRevocation) for.
+///
+/// [`authorise`] and [`crate::check_approval`] ask it about
+/// [`Delegation::id`] and refuse a delegation in it with
+/// [`AuthError::Revoked`]. Implemented for a slice of ids and for any
+/// `Fn(&[u8; 32]) -> bool`, mirroring [`RevokedKeys`].
+///
+/// A relying party that has accepted no delegation revocation passes an empty
+/// slice, `&[] as &[[u8; 32]]`: a statement about its state, made at the call.
+pub trait RevokedDelegations {
+    /// Whether the delegation with this [`Delegation::id`] has been revoked
+    /// at this relying party.
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool;
+}
+
+impl RevokedDelegations for [[u8; 32]] {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self.iter().any(|k| k == id)
+    }
+}
+
+impl<F: Fn(&[u8; 32]) -> bool> RevokedDelegations for F {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self(id)
     }
 }
 
@@ -355,6 +386,10 @@ pub fn verify_delegation(
 /// - `revoked` is what this relying party knows about revocation. A
 ///   delegation whose principal or delegate key is in it is refused with
 ///   [`AuthError::Revoked`].
+/// - `revoked_delegations` is the set of delegation ids this relying party has
+///   accepted a [`DelegationRevocation`](crate::DelegationRevocation) for. A
+///   delegation whose [`Delegation::id`] is in it is refused with
+///   [`AuthError::Revoked`], before the signature is checked.
 /// - `delegate_key` is the identity that actually presented a proof, which the
 ///   caller has already authenticated. Checking it against the delegation is
 ///   what stops a valid delegation being used by someone it was not issued to.
@@ -366,11 +401,12 @@ pub fn verify_delegation(
 ///   them is safe. An action that carries no quantity under a bounded
 ///   delegation passes `Some(0)`, which says so.
 #[allow(clippy::too_many_arguments)]
-pub fn authorise<R: RevokedKeys + ?Sized>(
+pub fn authorise<R: RevokedKeys + ?Sized, D: RevokedDelegations + ?Sized>(
     delegation: &Delegation,
     expected_audience: &[u8],
     principals: &[Vec<u8>],
     revoked: &R,
+    revoked_delegations: &D,
     delegate_key: &[u8],
     action: &[u8],
     amount: Option<u128>,
@@ -382,7 +418,9 @@ pub fn authorise<R: RevokedKeys + ?Sized>(
     if !principals.contains(&delegation.principal_key) {
         return Err(AuthError::NotAuthorised);
     }
-    if revoked.is_revoked(&delegation.principal_key) || revoked.is_revoked(&delegation.delegate_key)
+    if revoked.is_revoked(&delegation.principal_key)
+        || revoked.is_revoked(&delegation.delegate_key)
+        || revoked_delegations.is_revoked_delegation(&delegation.id())
     {
         return Err(AuthError::Revoked);
     }

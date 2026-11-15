@@ -154,6 +154,7 @@ fn delegation(c: &mut Criterion) {
                 AUDIENCE,
                 &principals,
                 no_revocations,
+                &[] as &[[u8; 32]],
                 &delegate_key_copy,
                 b"transfer",
                 Some(100),

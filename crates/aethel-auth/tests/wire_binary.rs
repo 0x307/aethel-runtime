@@ -5,7 +5,9 @@
 
 mod common;
 
-use aethel_auth::{verify_delegation, Approval, AuthError, Bounds, Delegation, LoginProof};
+use aethel_auth::{
+    verify_delegation, Approval, AuthError, Bounds, Delegation, DelegationRevocation, LoginProof,
+};
 use common::{hex, unhex, values, Value, AUDIENCE};
 
 const V0_3: &str = include_str!("vectors/v0_3_delegations.json");
@@ -359,4 +361,123 @@ fn some_zero_and_none_encode_differently_and_survive() {
     b.bounds = zero;
     assert_ne!(a.to_bytes(), b.to_bytes());
     assert_eq!(Delegation::from_bytes(&b.to_bytes()).unwrap(), b);
+}
+
+// ---- DelegationRevocation (tag 0x04) ------------------------------------------
+
+/// A revocation's signed block, with `id_len` bytes for the delegation id.
+fn revocation_with_id_len(id_len: usize) -> Vec<u8> {
+    let mut signed = Vec::new();
+    lp(&mut signed, b"aud");
+    lp(&mut signed, &vec![5u8; id_len]);
+    signed.extend_from_slice(&1u64.to_be_bytes());
+    envelope(0x04, 1, b"key", &signed, b"sig")
+}
+
+#[test]
+fn control_the_unmodified_revocation_encodings_decode() {
+    assert!(DelegationRevocation::from_bytes(&sample("delegation_revocation_minimal")).is_ok());
+    assert!(DelegationRevocation::from_bytes(&sample("delegation_revocation_full")).is_ok());
+    assert!(DelegationRevocation::from_bytes(&revocation_with_id_len(32)).is_ok());
+}
+
+#[test]
+fn a_revocation_uses_tag_4_version_1_and_holds_its_signed_bytes() {
+    let rev = DelegationRevocation::from_bytes(&sample("delegation_revocation_full")).unwrap();
+    let bytes = rev.to_bytes();
+    assert_eq!(&bytes[..2], &[0x04, 0x01]);
+    let at = offset_of_signed(&bytes);
+    let signed = rev.signing_input();
+    assert_eq!(&bytes[at..at + signed.len()], &signed[..]);
+    assert_eq!(&bytes[at - 4..at], &(signed.len() as u32).to_be_bytes());
+}
+
+#[test]
+fn a_revocation_id_that_is_not_32_bytes_is_refused() {
+    assert_eq!(
+        DelegationRevocation::from_bytes(&revocation_with_id_len(31)),
+        Err(AuthError::Malformed)
+    );
+    assert_eq!(
+        DelegationRevocation::from_bytes(&revocation_with_id_len(33)),
+        Err(AuthError::Malformed)
+    );
+}
+
+#[test]
+fn revocation_bytes_with_a_defect_are_refused() {
+    let good = sample("delegation_revocation_full");
+
+    let mut trailing = good.clone();
+    trailing.push(0);
+    assert_eq!(
+        DelegationRevocation::from_bytes(&trailing),
+        Err(AuthError::Malformed)
+    );
+
+    let mut truncated = good.clone();
+    truncated.pop();
+    assert_eq!(
+        DelegationRevocation::from_bytes(&truncated),
+        Err(AuthError::Malformed)
+    );
+
+    let mut bad_tag = good.clone();
+    bad_tag[0] = 0x09;
+    assert_eq!(
+        DelegationRevocation::from_bytes(&bad_tag),
+        Err(AuthError::Malformed)
+    );
+
+    let mut bad_version = good.clone();
+    bad_version[1] = 0x03;
+    assert_eq!(
+        DelegationRevocation::from_bytes(&bad_version),
+        Err(AuthError::Malformed)
+    );
+
+    let mut huge = good.clone();
+    huge[2..6].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert_eq!(
+        DelegationRevocation::from_bytes(&huge),
+        Err(AuthError::Malformed)
+    );
+
+    // Bytes inside the signed block beyond what the type defines.
+    let at = offset_of_signed(&good);
+    let signed_len = u32::from_be_bytes(good[at - 4..at].try_into().unwrap()) as usize;
+    let signer = &good[6..at - 4];
+    let mut signed = good[at..at + signed_len].to_vec();
+    signed.push(0);
+    assert_eq!(
+        DelegationRevocation::from_bytes(&envelope(0x04, 1, signer, &signed, b"sig")),
+        Err(AuthError::Malformed)
+    );
+}
+
+#[test]
+fn a_revocation_is_not_any_other_type_and_the_reverse() {
+    let rev = sample("delegation_revocation_full");
+    assert_eq!(Delegation::from_bytes(&rev), Err(AuthError::Malformed));
+    assert_eq!(LoginProof::from_bytes(&rev), Err(AuthError::Malformed));
+    assert_eq!(Approval::from_bytes(&rev), Err(AuthError::Malformed));
+    for other in ["delegation_full", "login_full", "approval_full"] {
+        assert_eq!(
+            DelegationRevocation::from_bytes(&sample(other)),
+            Err(AuthError::Malformed),
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn every_prefix_of_a_revocation_encoding_is_refused() {
+    let good = sample("delegation_revocation_full");
+    for n in 0..good.len() {
+        assert_eq!(
+            DelegationRevocation::from_bytes(&good[..n]),
+            Err(AuthError::Malformed),
+            "{n}"
+        );
+    }
 }

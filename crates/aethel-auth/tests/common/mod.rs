@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use aethel_auth::{Approval, Bounds, Delegation, Holder, LoginProof};
+use aethel_auth::{Approval, Bounds, Delegation, DelegationRevocation, Holder, LoginProof};
 use aethel_core::signing::Identity;
 
 pub const AUDIENCE: &[u8] = b"https://pay.example.com";
@@ -27,6 +27,7 @@ pub enum Value {
     Delegation(Delegation),
     Login(LoginProof),
     Approval(Approval),
+    Revocation(DelegationRevocation),
 }
 
 impl Value {
@@ -35,6 +36,7 @@ impl Value {
             Value::Delegation(v) => v.to_bytes(),
             Value::Login(v) => v.to_bytes(),
             Value::Approval(v) => v.to_bytes(),
+            Value::Revocation(v) => v.to_bytes(),
         }
     }
 
@@ -44,11 +46,13 @@ impl Value {
             Value::Delegation(v) => Delegation::from_bytes(bytes).as_ref() == Ok(v),
             Value::Login(v) => LoginProof::from_bytes(bytes).as_ref() == Ok(v),
             Value::Approval(v) => Approval::from_bytes(bytes).as_ref() == Ok(v),
+            Value::Revocation(v) => DelegationRevocation::from_bytes(bytes).as_ref() == Ok(v),
         }
     }
 }
 
-/// Two values per type: one minimal, one with every optional field set.
+/// Two values per type: one minimal, one with every optional field set. A
+/// delegation revocation has no optional field, so its two differ in value.
 pub fn values() -> Vec<(&'static str, &'static str, Value)> {
     let principal = identity(0x11);
     let delegate = identity(0x22);
@@ -85,6 +89,10 @@ pub fn values() -> Vec<(&'static str, &'static str, Value)> {
         60,
     );
 
+    // Appended after the 0.4.0 AUTH4-02 vectors, so those keep their place.
+    let r_min = holder.revoke_delegation(&d_min, nb);
+    let r_full = holder.revoke_delegation(&d_full, u64::MAX);
+
     vec![
         ("delegation_minimal", "delegation", Value::Delegation(d_min)),
         ("delegation_full", "delegation", Value::Delegation(d_full)),
@@ -92,5 +100,15 @@ pub fn values() -> Vec<(&'static str, &'static str, Value)> {
         ("login_full", "login_proof", Value::Login(l_full)),
         ("approval_minimal", "approval", Value::Approval(a_min)),
         ("approval_full", "approval", Value::Approval(a_full)),
+        (
+            "delegation_revocation_minimal",
+            "delegation_revocation",
+            Value::Revocation(r_min),
+        ),
+        (
+            "delegation_revocation_full",
+            "delegation_revocation",
+            Value::Revocation(r_full),
+        ),
     ]
 }

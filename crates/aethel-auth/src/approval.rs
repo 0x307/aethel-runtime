@@ -27,7 +27,7 @@
 use aethel_core::signing::verify_with_purpose;
 use subtle::ConstantTimeEq;
 
-use crate::delegation::{verify_delegation, Delegation, RevokedKeys};
+use crate::delegation::{verify_delegation, Delegation, RevokedDelegations, RevokedKeys};
 use crate::error::AuthError;
 use crate::nonce::NonceStore;
 use crate::proof::{check_envelope, claim_nonce, push_len_prefixed, VerifyParams};
@@ -94,7 +94,8 @@ impl Approval {
 ///
 /// Checks the delegation itself first, the same way [`crate::authorise`]
 /// does: genuine, live now, at this audience, from a principal in
-/// `principals`, with neither key in `revoked`. An approval that arrives after
+/// `principals`, with neither key in `revoked` and its id not in
+/// `revoked_delegations`. An approval that arrives after
 /// the delegation expired or a key was revoked is refused, even if
 /// `authorise` passed earlier.
 ///
@@ -104,12 +105,17 @@ impl Approval {
 /// nonce. The relying party computes all three request values from the request
 /// it received, never from the client.
 #[allow(clippy::too_many_arguments)]
-pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
+pub async fn check_approval<
+    R: RevokedKeys + ?Sized,
+    D: RevokedDelegations + ?Sized,
+    N: NonceStore,
+>(
     delegation: &Delegation,
     approval: &Approval,
     params: VerifyParams<'_>,
     principals: &[Vec<u8>],
     revoked: &R,
+    revoked_delegations: &D,
     request_digest: &[u8; 32],
     action: &[u8],
     amount: u128,
@@ -118,7 +124,9 @@ pub async fn check_approval<R: RevokedKeys + ?Sized, N: NonceStore>(
     if !principals.contains(&delegation.principal_key) {
         return Err(AuthError::NotAuthorised);
     }
-    if revoked.is_revoked(&delegation.principal_key) || revoked.is_revoked(&delegation.delegate_key)
+    if revoked.is_revoked(&delegation.principal_key)
+        || revoked.is_revoked(&delegation.delegate_key)
+        || revoked_delegations.is_revoked_delegation(&delegation.id())
     {
         return Err(AuthError::Revoked);
     }
