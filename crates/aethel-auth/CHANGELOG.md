@@ -29,6 +29,17 @@ All notable changes to this crate are documented here. Format loosely follows
 
 ### Added
 
+- **`VerifiedDelegation`: verify once, re-check cheaply.**
+  `VerifiedDelegation::verify` runs everything `authorise` runs before its
+  per-attempt checks (principal set, revoked keys and delegation ids, then
+  the signature, audience and window) and keeps the result with no signature.
+  `recheck` re-checks the audience, the window and both revoked sets without
+  verifying again, and `authorise` is a `recheck` plus the delegate, action
+  and amount checks. The free `authorise` is now `verify` then the handle's
+  `authorise`, with the same check order and the same error for every input.
+  The handle has no public fields, no constructor but `verify`, no serde and
+  no `Default`; its docs state the threat model (it trusts only the process
+  that built it). No signed byte, id or JSON changes.
 - **Canonical binary encoding.** `Delegation`, `LoginProof` and `Approval`
   each have `to_bytes()` and `from_bytes(&[u8]) -> Result<Self, AuthError>`.
   The layout is a type tag, a version, then the signer key, the exact

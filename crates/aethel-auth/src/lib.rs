@@ -102,7 +102,7 @@ pub mod wire;
 pub use approval::{check_approval, Approval};
 pub use delegation::{
     authorise, verify_delegation, Bounds, Delegation, RemainingObligations, RevokedDelegations,
-    RevokedKeys,
+    RevokedKeys, VerifiedDelegation,
 };
 pub use error::{AuthError, StoreError};
 #[cfg(feature = "holder")]
