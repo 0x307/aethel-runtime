@@ -3,7 +3,18 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - Unreleased
+
+Breaking. Revocation reaches login and step-up and gains a per-delegation
+form, an approval can come from a named approver, and the signed statements
+get a canonical binary encoding. No signed byte, id or JSON of any 0.3 value
+changes: 0.3 delegations, proofs and approvals still decode and verify. The
+source changes a 0.3 caller needs are listed under Migration.
+
+Formats need Ken's review before publish: `tests/vectors/` holds the binary
+vectors (`wire_v1.json`, `wire_v2.json`) and the 0.3 fixtures
+(`v0_3_delegations.json`), which were recorded from the 0.3.1 code before any
+0.4 change.
 
 ### Breaking
 
@@ -15,92 +26,159 @@ All notable changes to this crate are documented here. Format loosely follows
   nonce claim. Revocation follows the signature, so an unauthenticated caller
   cannot learn which keys are revoked (a bad signature from a revoked key is
   still `BadSignature`), and it precedes the nonce claim, so a revoked key's
-  proof never spends a nonce. 0.3 callers add one argument, for example
-  `&[] as &[Vec<u8>]`; no signed byte, id or JSON changes. The README's
-  "Login proofs and revocation" section and the rustdoc no longer say login
-  skips revocation.
+  proof never spends a nonce.
 - **`authorise` and `check_approval` take `revoked_delegations`.** A new
   argument `revoked_delegations: &D where D: RevokedDelegations + ?Sized`,
   directly after `revoked: &R`. A delegation whose `id()` is in it is refused
   with `AuthError::Revoked`, checked beside the key check and before the
-  signature. A relying party that has accepted no delegation revocation passes
-  `&[] as &[[u8; 32]]`. 0.3 callers add that one argument; no signed byte, id
-  or JSON changes.
-- **`Approval.principal_key` is now `approver_key`, and `Bounds` has a new
-  field.** The approval's signer may now be a named approver as well as the
-  principal, so the field says what it is. 0.3 JSON still decodes
-  (`#[serde(alias = "principal_key")]`) and a new `Approval` serialises
-  `approver_key`; `Approval::signing_input` is unchanged. `Bounds` gains
-  `pub approvers: Vec<Vec<u8>>`, so a `Bounds { .. }` literal without
-  `..Bounds::default()` needs `approvers: Vec::new()`. 0.3 JSON decodes and an
-  empty list serialises exactly as 0.3 did.
+  signature.
+- **`Approval.principal_key` is now `approver_key`.** The approval's signer
+  may be a named approver as well as the principal, so the field says what it
+  is. 0.3 JSON still decodes (`#[serde(alias = "principal_key")]`) and a new
+  `Approval` serialises `approver_key`. `Approval::signing_input` is unchanged.
+- **`Bounds` has a new field, `approvers: Vec<Vec<u8>>`.** A `Bounds { .. }`
+  literal that does not end in `..Bounds::default()` needs
+  `approvers: Vec::new()`. 0.3 JSON decodes, and an empty list serialises
+  exactly as 0.3 did.
 
 ### Added
 
-- **`VerifiedDelegation`: verify once, re-check cheaply.**
-  `VerifiedDelegation::verify` runs everything `authorise` runs before its
-  per-attempt checks (principal set, revoked keys and delegation ids, then
-  the signature, audience and window) and keeps the result with no signature.
-  `recheck` re-checks the audience, the window and both revoked sets without
-  verifying again, and `authorise` is a `recheck` plus the delegate, action
-  and amount checks. The free `authorise` is now `verify` then the handle's
-  `authorise`, with the same check order and the same error for every input.
-  The handle has no public fields, no constructor but `verify`, no serde and
-  no `Default`; its docs state the threat model (it trusts only the process
-  that built it). No signed byte, id or JSON changes.
-- **Canonical binary encoding.** `Delegation`, `LoginProof` and `Approval`
-  each have `to_bytes()` and `from_bytes(&[u8]) -> Result<Self, AuthError>`.
-  The layout is a type tag, a version, then the signer key, the exact
-  `signing_input()` and the signature, each with a `u32` BE length (see the
-  `wire` module). Decoding is strict (trailing bytes, unknown tag or version,
-  a length past the end, a wrong-size nonce or digest, a bad option flag are
-  all `Malformed`), canonical in both directions, and never allocates from an
-  unchecked length. `from_bytes` checks structure only, never the signature.
-  JSON stays supported.
+- **Canonical binary encoding.** `Delegation`, `LoginProof`, `Approval` and
+  `DelegationRevocation` each have `to_bytes()` and
+  `from_bytes(&[u8]) -> Result<Self, AuthError>`. The layout is a type tag
+  (`0x01` delegation, `0x02` login proof, `0x03` approval, `0x04` delegation
+  revocation), a version, then the signer key, the exact `signing_input()` and
+  the signature, each with a `u32` BE length (see the `wire` module). Decoding
+  is strict (trailing bytes, an unknown tag or version, a length past the end,
+  a wrong-size nonce or digest and a bad option flag are all `Malformed`),
+  canonical in both directions, and never allocates from an unchecked length.
+  `from_bytes` checks structure only, never the signature. JSON stays
+  supported.
 - **Revoke one delegation by id.** `DelegationRevocation` (principal key,
   audience, delegation id, `issued_at`, signature), signed under the new
-  purpose `purposes::AUTH_DELEGATION_REVOCATION_V1`, with
+  purpose `purposes::AUTH_DELEGATION_REVOCATION_V1`, and
   `verify_delegation_revocation(&rev, &delegation, expected_audience)`. Only
-  the delegation's principal can sign one: a delegate or an authority gets
-  `NotAuthorised`. It has no time cutoff, and it ends that delegation without
-  touching the principal's others (a key `Revocation` ends all of them). It has
-  binary tag `0x04`, version `0x01`, and serde like the other statements.
+  the delegation's principal can sign one: a delegate, an authority or an
+  approver gets `NotAuthorised`. It has no time cutoff, and it ends that
+  delegation without touching the principal's others (a key `Revocation` ends
+  all of them).
 - **`RevokedDelegations`**, the relying party's set of revoked delegation ids,
   implemented for `[[u8; 32]]` and for `Fn(&[u8; 32]) -> bool`, mirroring
   `RevokedKeys`.
 - **`Holder::revoke_delegation(&delegation, issued_at)`** (behind `holder`).
   Panics, as documented, if the holder is not the delegation's principal.
+- **`VerifiedDelegation`: verify once, re-check cheaply.**
+  `VerifiedDelegation::verify` runs everything `authorise` runs before its
+  per-attempt checks and keeps the result with no signature. `recheck`
+  re-checks the audience, the window and both revoked sets without verifying
+  again, and `authorise` is a `recheck` plus the delegate, action and amount
+  checks. The handle has no public fields, no constructor but `verify`, no
+  serde and no `Default`; its docs state the threat model (it trusts only the
+  process that built it).
 - **Named approvers (delegation version 2).** `Bounds::approvers` lists
   ML-DSA-65 keys that may sign an `Approval` under a delegation besides the
   principal. `check_approval` accepts the principal or a named approver; any
   other signer is `NotAuthorised`, and a signer in `revoked` is `Revoked`.
-  Approvers only approve: nothing else reads the list, so an approver cannot
-  sign a delegation or a `DelegationRevocation`. Content picks the version:
-  empty `approvers` is version 1, byte for byte what 0.3 signs (signed bytes,
-  purpose, id label and wire version `0x01`); a non-empty list is version 2,
-  which signs the version 1 bytes, then a `u32` BE count and each approver
-  length-prefixed, under the new `purposes::AUTH_DELEGATION_V2`, with id label
-  `aethel-auth/delegation-id/v2` and wire version `0x02`. Adding or removing an
-  approver needs a new signature (the old one is `BadSignature`). The limits,
-  checked by `verify_delegation` before the signature and refused as
-  `Malformed`: at most 8 approvers (`MAX_APPROVERS`), none empty, no
-  duplicates, none equal to the principal or delegate key. The decoder refuses
-  a version byte that does not match the content. `Holder::delegate_to_with_approvers`
-  builds one; `Holder::delegate_to` and `Holder::approve` are unchanged.
-- Test vectors in `tests/vectors/`: `wire_v1.json` (two values per type) and
-  `v0_3_delegations.json`, recorded from the 0.3.1 code before any 0.4 change.
-  `wire_v1.json` also holds two `DelegationRevocation` values, and
-  `wire_v2.json` holds two version 2 delegations (with their ids) and an
-  approval signed by a named approver.
+  Approvers only approve: nothing else reads the list. Content picks the
+  version: empty `approvers` is version 1, byte for byte what 0.3 signs
+  (signed bytes, purpose, id label and wire version `0x01`); a non-empty list
+  is version 2, which signs the version 1 bytes, then a `u32` BE count and
+  each approver length-prefixed, under the new
+  `purposes::AUTH_DELEGATION_V2`, with id label `aethel-auth/delegation-id/v2`
+  and wire version `0x02`. Adding or removing an approver needs a new
+  signature (the old one is `BadSignature`). The limits, checked by
+  `verify_delegation` before the signature and refused as `Malformed`: at most
+  8 approvers (`MAX_APPROVERS`), none empty, no duplicates, none equal to the
+  principal or delegate key. The decoder refuses a version byte that does not
+  match the content.
+- **`Holder::delegate_to_with_approvers`** builds a version 2 delegation.
+  `Holder::delegate_to` and `Holder::approve` are unchanged.
+- Test vectors in `tests/vectors/`: `wire_v1.json` (two values per type,
+  including two `DelegationRevocation` values), `wire_v2.json` (two version 2
+  delegations and an approval signed by a named approver) and
+  `v0_3_delegations.json`.
+
+### Changed
+
+- The free `authorise` is now `VerifiedDelegation::verify` followed by the
+  handle's `authorise`, with the same check order and the same error for every
+  input.
+- `verify_delegation` checks the approver limits before the signature.
+- The README's "Login proofs and revocation" section and the rustdoc no longer
+  say login skips revocation, and the README says an approval may come from a
+  named approver, not only the principal. New README sections cover the binary
+  encoding, revoking one delegation, `VerifiedDelegation` and named approvers.
+- The crate's tier stays Preview.
 
 ### Migration
 
-- 0.3 JSON still decodes, and the `id()`, `signing_input()` and signature of
-  every 0.3 value are unchanged. The one source change a 0.3 caller needs is
-  the extra `revoked_delegations` argument to `authorise` and `check_approval`.
-- A delegation without approvers is unchanged: it is version 1, with the same
-  bytes, purpose, id and wire encoding as 0.3. `Approval` JSON that says
-  `principal_key` still decodes; rename the field in code to `approver_key`.
+Source changes for a 0.3 caller. A relying party that has revoked nothing
+passes an empty set, which is a statement about its state made at the call.
+
+`verify_login`, `verify_login_for_request` and `verify_step_up` gain
+`revoked`, directly before `nonces`:
+
+```rust
+// 0.3
+verify_login(&proof, params, &nonces).await?;
+verify_login_for_request(&proof, params, &digest, &nonces).await?;
+verify_step_up(&step_up, params, &action_digest, &nonces).await?;
+
+// 0.4
+let revoked: &[Vec<u8>] = &[]; // your revoked keys
+verify_login(&proof, params, revoked, &nonces).await?;
+verify_login_for_request(&proof, params, &digest, revoked, &nonces).await?;
+verify_step_up(&step_up, params, &action_digest, revoked, &nonces).await?;
+```
+
+`authorise` and `check_approval` gain `revoked_delegations`, directly after
+`revoked`:
+
+```rust
+// 0.3
+authorise(&d, aud, &principals, &revoked, &delegate, action, amount, now)?;
+check_approval(&d, &a, params, &principals, &revoked, &digest, action, amt, &nonces).await?;
+
+// 0.4
+let revoked_delegations: &[[u8; 32]] = &[]; // ids you hold a DelegationRevocation for
+authorise(&d, aud, &principals, &revoked, revoked_delegations, &delegate, action, amount, now)?;
+check_approval(
+    &d, &a, params, &principals, &revoked, revoked_delegations, &digest, action, amt, &nonces,
+).await?;
+```
+
+`Bounds` has a new field. A struct literal needs `approvers: Vec::new()` or
+`..Default::default()`:
+
+```rust
+// 0.3
+let bounds = Bounds { actions, max_per_invocation, max_total, window_secs, approval_required_above };
+
+// 0.4
+let bounds = Bounds {
+    actions, max_per_invocation, max_total, window_secs, approval_required_above,
+    approvers: Vec::new(),
+};
+```
+
+`Approval.principal_key` is now `approver_key`:
+
+```rust
+// 0.3
+let signer = &approval.principal_key;
+
+// 0.4
+let signer = &approval.approver_key;
+```
+
+What does not change:
+
+- 0.3 JSON still decodes, including an `Approval` that says `principal_key`.
+  A new `Approval` serialises `approver_key`, so a 0.3 reader cannot read it:
+  update readers before writers.
+- The `id()`, `signing_input()` and signature of every 0.3 value are
+  unchanged. A delegation without approvers is version 1, with the same bytes,
+  purpose, id and wire encoding as 0.3.
 
 ## [0.3.1] - Unreleased
 
