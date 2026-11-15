@@ -143,3 +143,8 @@ required-features = ["holder"]
 name = "login_patterns"
 path = "tests/login_patterns.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "gen_vectors"
+path = "tests/gen_vectors.rs"
+required-features = ["holder", "serde"]
