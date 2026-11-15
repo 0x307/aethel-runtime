@@ -138,3 +138,8 @@ required-features = ["serde"]
 name = "approval"
 path = "tests/approval.rs"
 required-features = ["holder"]
+
+[[test]]
+name = "login_patterns"
+path = "tests/login_patterns.rs"
+required-features = ["holder"]

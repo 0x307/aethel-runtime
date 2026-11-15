@@ -98,6 +98,39 @@ The host is not in it because the audience is already signed. Headers are not in
 
 A proof without a digest has the same signed bytes and the same JSON as before the field existed, so every existing proof still verifies. A verifier older than the field refuses a proof that carries one: it checks the signature over bytes without the digest, so it fails closed.
 
+## Login proofs and revocation
+
+`verify_login` and `verify_login_for_request` take no `RevokedKeys` and do not check revocation. They check the audience, the clock, the signature and the nonce, and that is all. A key that has been revoked still produces a proof that verifies. `authorise` and `check_approval` do check revocation, because they take a `RevokedKeys`.
+
+A relying party that accepts logins therefore checks the proof's signer key against its own revoked set after verifying, or goes through `authorise`. The check, with `revoked` being the set you keep (a slice, a `HashSet<Vec<u8>>`, or a closure over your store):
+
+```rust
+use aethel_auth::{AuthError, RevokedKeys};
+
+let who = verify_login(&proof, params, &nonces).await?;
+if revoked.is_revoked(&who.public_key) {
+    return Err(AuthError::Revoked);
+}
+```
+
+The same two lines follow `verify_login_for_request`. Keys are compared as bytes, as in `authorise`.
+
+## A server challenge
+
+A login proof is built by the client alone, so nothing in it comes from the server. When a relying party wants a login tied to a value it chose, it sends the client 32 random bytes. The client adds them to the request digest as one more `lp(challenge)` field, using the same `lp` framing as the recommended digest above, and signs that with `Holder::login_for_request`. The server recomputes the digest from the challenge it issued and stored, and checks with `verify_login_for_request`. A challenge is good once: the server deletes it on first use, so a second proof over the same challenge finds nothing to compute a digest from.
+
+```text
+request_digest = SHA-256( lp(method) || lp(path) || lp(SHA-256(body)) || lp(challenge) )
+```
+
+## Not in this crate
+
+Three things are left out on purpose. Each is something the app does itself.
+
+- **A free-form constraints field on a delegation.** A delegation's limits are `Bounds`, which the crate can check. Any other limit is the app's own: it signs the limit as its own app state and checks it itself.
+- **Per-action bounds beyond `Bounds`.** `Bounds` has one set of ceilings for all of a delegation's actions. An app that wants a different ceiling per action keeps its own table keyed by `Delegation::id` and enforces it.
+- **A session statement.** After a login, the app runs its own session, such as a MAC over a key only the server holds. `LoginProof::session_commitment` is reserved in the wire format and does nothing in this release.
+
 ## Nonces and more than one instance
 
 Every proof's nonce is claimed in your `NonceStore` under its purpose and its signer's key, so one party's statement never spends another's nonce. The store keeps a nonce until the earlier of the proof's own expiry and `issued_at + MAX_AGE_CEILING_SECS` (3,600 s; a larger `max_age_secs` is clamped to it), plus `NONCE_SKEW_SECS` (300 s). That depends only on the proof, so instances with different `max_age_secs` agree. Two things are still yours: **every instance at one audience must share one store**, and their clocks must stay within the skew margin of the store's.
