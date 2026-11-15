@@ -7,6 +7,18 @@ All notable changes to this crate are documented here. Format loosely follows
 
 ### Breaking
 
+- **Login and step-up check revocation.** `verify_login`,
+  `verify_login_for_request` and `verify_step_up` each take
+  `revoked: &R where R: RevokedKeys + ?Sized`, directly before `nonces`. A
+  proof signed by a revoked key is refused with `AuthError::Revoked`. The
+  check order is now: envelope, digest checks, signature, **revocation**,
+  nonce claim. Revocation follows the signature, so an unauthenticated caller
+  cannot learn which keys are revoked (a bad signature from a revoked key is
+  still `BadSignature`), and it precedes the nonce claim, so a revoked key's
+  proof never spends a nonce. 0.3 callers add one argument, for example
+  `&[] as &[Vec<u8>]`; no signed byte, id or JSON changes. The README's
+  "Login proofs and revocation" section and the rustdoc no longer say login
+  skips revocation.
 - **`authorise` and `check_approval` take `revoked_delegations`.** A new
   argument `revoked_delegations: &D where D: RevokedDelegations + ?Sized`,
   directly after `revoked: &R`. A delegation whose `id()` is in it is refused

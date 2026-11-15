@@ -70,7 +70,8 @@ fn an_agent_proof_verifies_in_one_round_trip() {
     let nonces = InMemoryNonceStore::new();
     let proof = make_proof(&id, AUDIENCE, [1u8; 32], NOW - 5, NOW + 60, None);
 
-    let identity_out = block_on(verify_login(&proof, params(), &nonces)).expect("valid proof");
+    let identity_out =
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).expect("valid proof");
 
     assert_eq!(identity_out.public_key, id.public_key());
     assert_eq!(identity_out.strength, AuthStrength::Proven);
@@ -86,8 +87,8 @@ fn a_replayed_proof_is_refused() {
     let nonces = InMemoryNonceStore::new();
     let proof = make_proof(&id, AUDIENCE, [2u8; 32], NOW - 5, NOW + 60, None);
 
-    block_on(verify_login(&proof, params(), &nonces)).expect("first use");
-    let err = block_on(verify_login(&proof, params(), &nonces)).unwrap_err();
+    block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).expect("first use");
+    let err = block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err();
 
     assert_eq!(err, AuthError::NonceAlreadyUsed);
 }
@@ -106,7 +107,7 @@ fn a_proof_for_another_audience_is_refused() {
     );
 
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::AudienceMismatch,
         "a proof minted for one relying party must not authenticate at another"
     );
@@ -119,7 +120,7 @@ fn a_proof_from_the_future_is_refused() {
     let proof = make_proof(&id, AUDIENCE, [4u8; 32], NOW + 60, NOW + 600, None);
 
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::StaleOrFutureProof,
         "a fast clock must not buy validity"
     );
@@ -141,7 +142,7 @@ fn a_proof_older_than_the_verifiers_max_age_is_refused() {
     );
 
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::StaleOrFutureProof,
         "the client's expiry is an input to validate, not a fact to trust"
     );
@@ -154,7 +155,7 @@ fn an_expired_proof_is_refused() {
     let proof = make_proof(&id, AUDIENCE, [6u8; 32], NOW - 100, NOW - 1, None);
 
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::Expired
     );
 }
@@ -172,7 +173,7 @@ fn a_signature_made_under_another_purpose_is_refused() {
         .expect("signing");
 
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::BadSignature
     );
 }
@@ -194,7 +195,7 @@ fn tampering_with_any_signed_field_is_refused() {
         mutate(&mut proof);
 
         assert_eq!(
-            block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+            block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
             AuthError::BadSignature,
             "tampering with {label} must invalidate the signature"
         );
@@ -208,7 +209,7 @@ fn a_nonce_is_only_spent_when_the_signature_verified() {
     let mut proof = make_proof(&id, AUDIENCE, [9u8; 32], NOW - 5, NOW + 60, None);
     proof.signature[0] ^= 0xff;
 
-    let _ = block_on(verify_login(&proof, params(), &nonces));
+    let _ = block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces));
 
     assert!(
         nonces.is_empty(),
@@ -276,10 +277,10 @@ fn nonce_retention_is_bounded_by_the_age_ceiling_plus_skew() {
 
     let store = RecordingStore(std::sync::Mutex::new(Vec::new()));
     let far = make_proof(&id, AUDIENCE, [70u8; 32], NOW, u64::MAX, None);
-    block_on(verify_login(&far, params(), &store)).expect("valid proof");
+    block_on(verify_login(&far, params(), &[] as &[Vec<u8>], &store)).expect("valid proof");
 
     let short = make_proof(&id, AUDIENCE, [71u8; 32], NOW, NOW + 30, None);
-    block_on(verify_login(&short, params(), &store)).expect("valid proof");
+    block_on(verify_login(&short, params(), &[] as &[Vec<u8>], &store)).expect("valid proof");
 
     let recorded = store.0.lock().unwrap().clone();
     assert_eq!(
@@ -319,6 +320,7 @@ fn a_proof_bound_to_this_request_is_accepted() {
         &proof,
         params(),
         &THIS_REQUEST,
+        &[] as &[Vec<u8>],
         &nonces,
     ))
     .expect("a matching digest is accepted");
@@ -330,6 +332,7 @@ fn a_proof_bound_to_this_request_is_accepted() {
             &proof,
             params(),
             &THIS_REQUEST,
+            &[] as &[Vec<u8>],
             &nonces
         ))
         .unwrap_err(),
@@ -351,6 +354,7 @@ fn a_proof_bound_to_another_request_is_refused() {
             &proof,
             params(),
             &OTHER_REQUEST,
+            &[] as &[Vec<u8>],
             &nonces
         ))
         .unwrap_err(),
@@ -366,6 +370,7 @@ fn a_proof_bound_to_another_request_is_refused() {
         &proof,
         params(),
         &THIS_REQUEST,
+        &[] as &[Vec<u8>],
         &nonces,
     ))
     .expect("control: the matching request is accepted");
@@ -382,6 +387,7 @@ fn an_unbound_proof_is_refused_where_binding_is_required() {
             &proof,
             params(),
             &THIS_REQUEST,
+            &[] as &[Vec<u8>],
             &nonces
         ))
         .unwrap_err(),
@@ -391,7 +397,8 @@ fn an_unbound_proof_is_refused_where_binding_is_required() {
     assert!(nonces.is_empty());
 
     // Control: the same proof is a valid unbound login.
-    block_on(verify_login(&proof, params(), &nonces)).expect("control: valid unbound proof");
+    block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces))
+        .expect("control: valid unbound proof");
 }
 
 /// A holder that asked for binding must not have it silently dropped by a
@@ -403,7 +410,7 @@ fn plain_verify_login_refuses_a_bound_proof() {
 
     let nonces = InMemoryNonceStore::new();
     assert_eq!(
-        block_on(verify_login(&proof, params(), &nonces)).unwrap_err(),
+        block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces)).unwrap_err(),
         AuthError::RequestDigestNotChecked
     );
     assert!(nonces.is_empty());
@@ -413,6 +420,7 @@ fn plain_verify_login_refuses_a_bound_proof() {
         &proof,
         params(),
         &THIS_REQUEST,
+        &[] as &[Vec<u8>],
         &nonces,
     ))
     .expect("control: valid bound proof");
@@ -433,6 +441,7 @@ fn tampering_with_the_request_digest_breaks_the_signature() {
             &swapped,
             params(),
             &OTHER_REQUEST,
+            &[] as &[Vec<u8>],
             &InMemoryNonceStore::new()
         ))
         .unwrap_err(),
@@ -446,6 +455,7 @@ fn tampering_with_the_request_digest_breaks_the_signature() {
         block_on(verify_login(
             &stripped,
             params(),
+            &[] as &[Vec<u8>],
             &InMemoryNonceStore::new()
         ))
         .unwrap_err(),
@@ -458,6 +468,7 @@ fn tampering_with_the_request_digest_breaks_the_signature() {
         &proof,
         params(),
         &THIS_REQUEST,
+        &[] as &[Vec<u8>],
         &InMemoryNonceStore::new(),
     ))
     .expect("control: untampered bound proof");

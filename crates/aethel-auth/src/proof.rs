@@ -47,6 +47,7 @@ use aethel_core::signing::verify_with_purpose;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
+use crate::delegation::RevokedKeys;
 use crate::error::AuthError;
 use crate::nonce::NonceStore;
 use crate::purposes::{AUTH_LOGIN_V1, AUTH_STEP_UP_V1};
@@ -361,7 +362,8 @@ pub struct VerifyParams<'a> {
 
 /// Verify a login proof and spend its nonce.
 ///
-/// Does not check revocation: see the README's "Login proofs and revocation".
+/// `revoked` is the relying party's own set of revoked keys. A proof signed by
+/// a key in it is refused with [`AuthError::Revoked`].
 ///
 /// # Order of checks, and why
 ///
@@ -370,9 +372,13 @@ pub struct VerifyParams<'a> {
 ///
 /// The signature next. It costs real CPU, so it sits behind the free checks.
 ///
-/// The nonce claim **last**, after the signature has verified. That ordering
-/// is deliberate and is the opposite of what a server-issued challenge wants.
-/// Claiming first would let an unauthenticated party write into the nonce
+/// Revocation after the signature, so a caller who cannot sign as a key cannot
+/// learn whether it is revoked, and before the nonce claim, so a revoked key's
+/// proof never spends a nonce.
+///
+/// The nonce claim **last**, after the signature and the revocation check have
+/// passed. That ordering is deliberate and is the opposite of what a
+/// server-issued challenge wants. Claiming first would let an unauthenticated party write into the nonce
 /// store at will, which is a denial-of-service surface with no upside: a
 /// replayed proof still fails, just at the claim instead of before it.
 ///
@@ -381,17 +387,19 @@ pub struct VerifyParams<'a> {
 /// If the proof carries a [`LoginProof::request_digest`], this returns
 /// [`AuthError::RequestDigestNotChecked`] without checking the signature or
 /// claiming the nonce. Use [`verify_login_for_request`] for those.
-pub async fn verify_login<N: NonceStore>(
+pub async fn verify_login<R: RevokedKeys + ?Sized, N: NonceStore>(
     proof: &LoginProof,
     params: VerifyParams<'_>,
+    revoked: &R,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
-    verify_login_inner(proof, params, None, nonces).await
+    verify_login_inner(proof, params, None, revoked, nonces).await
 }
 
 /// Verify a login proof that is bound to one request, and spend its nonce.
 ///
-/// Does not check revocation: see the README's "Login proofs and revocation".
+/// `revoked` is the relying party's own set of revoked keys. A proof signed by
+/// a key in it is refused with [`AuthError::Revoked`].
 ///
 /// `expected_request_digest` is the relying party's own digest of the request
 /// it received, computed the same way the holder computed it. It must never
@@ -403,21 +411,30 @@ pub async fn verify_login<N: NonceStore>(
 /// because an unbound proof is exactly what this check exists to rule out.
 /// Otherwise the checks and their order are those of [`verify_login`], with
 /// the digest compared, in constant time, before the signature.
-pub async fn verify_login_for_request<N: NonceStore>(
+pub async fn verify_login_for_request<R: RevokedKeys + ?Sized, N: NonceStore>(
     proof: &LoginProof,
     params: VerifyParams<'_>,
     expected_request_digest: &[u8; 32],
+    revoked: &R,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
-    verify_login_inner(proof, params, Some(expected_request_digest), nonces).await
+    verify_login_inner(
+        proof,
+        params,
+        Some(expected_request_digest),
+        revoked,
+        nonces,
+    )
+    .await
 }
 
 /// One implementation for both entry points, so the bound and unbound checks
 /// cannot drift apart.
-async fn verify_login_inner<N: NonceStore>(
+async fn verify_login_inner<R: RevokedKeys + ?Sized, N: NonceStore>(
     proof: &LoginProof,
     params: VerifyParams<'_>,
     expected_request_digest: Option<&[u8; 32]>,
+    revoked: &R,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
     if proof.public_key.is_empty() || proof.signature.is_empty() {
@@ -449,6 +466,12 @@ async fn verify_login_inner<N: NonceStore>(
 
     if !verified {
         return Err(AuthError::BadSignature);
+    }
+
+    // After the signature, so only the key's own holder learns it is revoked,
+    // and before the nonce claim, so a revoked key's proof spends no nonce.
+    if revoked.is_revoked(&proof.public_key) {
+        return Err(AuthError::Revoked);
     }
 
     claim_nonce(
@@ -547,10 +570,15 @@ impl StepUpProof {
 /// computed from its own view of the request. Comparing it against the signed
 /// one is the whole point: a holder who signed for a different action, or a
 /// caller who swapped the action after the signature, is refused.
-pub async fn verify_step_up<N: NonceStore>(
+///
+/// `revoked` is the relying party's own set of revoked keys. A step-up signed
+/// by a key in it is refused with [`AuthError::Revoked`], after the signature
+/// and before the nonce claim, as for [`verify_login`].
+pub async fn verify_step_up<R: RevokedKeys + ?Sized, N: NonceStore>(
     proof: &StepUpProof,
     params: VerifyParams<'_>,
     expected_action_digest: &[u8; 32],
+    revoked: &R,
     nonces: &N,
 ) -> Result<AuthenticatedIdentity, AuthError> {
     if proof.public_key.is_empty() || proof.signature.is_empty() {
@@ -576,6 +604,12 @@ pub async fn verify_step_up<N: NonceStore>(
 
     if !verified {
         return Err(AuthError::BadSignature);
+    }
+
+    // After the signature, so only the key's own holder learns it is revoked,
+    // and before the nonce claim, so a revoked key's proof spends no nonce.
+    if revoked.is_revoked(&proof.public_key) {
+        return Err(AuthError::Revoked);
     }
 
     claim_nonce(

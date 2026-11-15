@@ -414,10 +414,17 @@ fn another_keys_login_does_not_burn_the_approval_nonce() {
     let a = approve(&owner, &d, 500, 23);
 
     let burn = Holder::new(&agent, AUDIENCE).login(a.nonce, NOW - 1, 60);
-    block_on(verify_login(&burn, params(), &nonces)).expect("the agent's own login");
+    block_on(verify_login(&burn, params(), &[] as &[Vec<u8>], &nonces))
+        .expect("the agent's own login");
     // The owner's own login with the same nonce is a different purpose too.
     let own_login = Holder::new(&owner, AUDIENCE).login(a.nonce, NOW - 1, 60);
-    block_on(verify_login(&own_login, params(), &nonces)).expect("the owner's login");
+    block_on(verify_login(
+        &own_login,
+        params(),
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("the owner's login");
 
     check(&d, &a, &owner, NONE_REVOKED, &nonces).expect("the approval is still unspent");
     assert_eq!(

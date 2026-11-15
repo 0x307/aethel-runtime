@@ -77,7 +77,7 @@ An amount is required under a delegation that sets any amount bound. `None` ther
 
 A plain login proof is bound to one relying party, one window and one nonce, but not to a request. Anyone who sees it before the relying party claims its nonce (a proxy that terminates TLS, a gateway, a log) can attach it to a different request at the same audience.
 
-To close that, the holder signs a digest of the request with `Holder::login_for_request`, and the relying party checks it with `verify_login_for_request(proof, params, &expected_digest, nonces)`. The digest is an optional field, `LoginProof::request_digest`, signed under the same `aethel-auth/login/v1` purpose. This is composition over the existing login proof, not a new construction.
+To close that, the holder signs a digest of the request with `Holder::login_for_request`, and the relying party checks it with `verify_login_for_request(proof, params, &expected_digest, &revoked, nonces)`. The digest is an optional field, `LoginProof::request_digest`, signed under the same `aethel-auth/login/v1` purpose. This is composition over the existing login proof, not a new construction.
 
 - **The relying party computes the expected digest** from the request it actually received. Never take it from the client: comparing the proof's digest with a digest the client also chose checks nothing.
 - **A proof without a digest is refused** by `verify_login_for_request`, because an unbound proof is good for any request.
@@ -100,20 +100,13 @@ A proof without a digest has the same signed bytes and the same JSON as before t
 
 ## Login proofs and revocation
 
-`verify_login` and `verify_login_for_request` take no `RevokedKeys` and do not check revocation. They check the audience, the clock, the signature and the nonce, and that is all. A key that has been revoked still produces a proof that verifies. `authorise` and `check_approval` do check revocation, because they take a `RevokedKeys`.
-
-A relying party that accepts logins therefore checks the proof's signer key against its own revoked set after verifying, or goes through `authorise`. The check, with `revoked` being the set you keep (a slice, a `HashSet<Vec<u8>>`, or a closure over your store):
+`verify_login`, `verify_login_for_request` and `verify_step_up` each take the relying party's revoked-key set, `revoked: &R where R: RevokedKeys`, directly before `nonces`. A proof signed by a key in it is refused with `AuthError::Revoked`. The set is the one you keep: a slice, a `HashSet<Vec<u8>>`, or a closure over your store.
 
 ```rust
-use aethel_auth::{AuthError, RevokedKeys};
-
-let who = verify_login(&proof, params, &nonces).await?;
-if revoked.is_revoked(&who.public_key) {
-    return Err(AuthError::Revoked);
-}
+let who = verify_login(&proof, params, &revoked, &nonces).await?;
 ```
 
-The same two lines follow `verify_login_for_request`. Keys are compared as bytes, as in `authorise`.
+The checks run in this order: the envelope (audience and clock), the digest checks, the signature, revocation, then the nonce claim. Revocation sits after the signature, so a caller who cannot sign as a key cannot tell whether it is revoked: a bad signature from a revoked key is `BadSignature`. It sits before the nonce claim, so a revoked key's proof never spends a nonce. Keys are compared as bytes, as in `authorise`. A relying party with no revoked keys passes `&[] as &[Vec<u8>]`.
 
 ## A server challenge
 

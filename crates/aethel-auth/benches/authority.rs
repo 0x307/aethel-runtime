@@ -90,7 +90,10 @@ fn login(c: &mut Criterion) {
                 nonce[..4].copy_from_slice(&n.to_le_bytes());
                 (InMemoryNonceStore::new(), holder.login(nonce, NOW, 300))
             },
-            |(nonces, proof)| block_on(verify_login(&proof, params(), &nonces)).expect("verify"),
+            |(nonces, proof)| {
+                block_on(verify_login(&proof, params(), &[] as &[Vec<u8>], &nonces))
+                    .expect("verify")
+            },
             criterion::BatchSize::SmallInput,
         )
     });
@@ -121,7 +124,14 @@ fn delegation(c: &mut Criterion) {
                 )
             },
             |(nonces, proof)| {
-                block_on(verify_step_up(&proof, params(), &action, &nonces)).expect("verify")
+                block_on(verify_step_up(
+                    &proof,
+                    params(),
+                    &action,
+                    &[] as &[Vec<u8>],
+                    &nonces,
+                ))
+                .expect("verify")
             },
             criterion::BatchSize::SmallInput,
         )

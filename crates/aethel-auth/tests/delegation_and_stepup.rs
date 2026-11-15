@@ -61,7 +61,14 @@ fn a_step_up_authorises_the_action_it_was_signed_for() {
     let action = [0xAA; 32];
     let proof = make_step_up(&id, AUDIENCE, [20u8; 32], action);
 
-    let out = block_on(verify_step_up(&proof, params(), &action, &nonces)).expect("valid step-up");
+    let out = block_on(verify_step_up(
+        &proof,
+        params(),
+        &action,
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("valid step-up");
 
     assert_eq!(out.method, AuthMethod::StepUp);
     assert_eq!(out.public_key, id.public_key());
@@ -80,6 +87,7 @@ fn a_step_up_for_one_action_does_not_authorise_another() {
             &proof,
             params(),
             &actually_attempted,
+            &[] as &[Vec<u8>],
             &nonces
         ))
         .unwrap_err(),
@@ -99,7 +107,14 @@ fn swapping_the_action_after_signing_is_refused() {
     proof.action_digest = [0xBB; 32];
 
     assert_eq!(
-        block_on(verify_step_up(&proof, params(), &[0xBB; 32], &nonces)).unwrap_err(),
+        block_on(verify_step_up(
+            &proof,
+            params(),
+            &[0xBB; 32],
+            &[] as &[Vec<u8>],
+            &nonces
+        ))
+        .unwrap_err(),
         AuthError::BadSignature,
         "the action digest is inside the signature, not beside it"
     );
@@ -112,9 +127,23 @@ fn a_step_up_cannot_be_replayed() {
     let action = [0xCC; 32];
     let proof = make_step_up(&id, AUDIENCE, [23u8; 32], action);
 
-    block_on(verify_step_up(&proof, params(), &action, &nonces)).expect("first use");
+    block_on(verify_step_up(
+        &proof,
+        params(),
+        &action,
+        &[] as &[Vec<u8>],
+        &nonces,
+    ))
+    .expect("first use");
     assert_eq!(
-        block_on(verify_step_up(&proof, params(), &action, &nonces)).unwrap_err(),
+        block_on(verify_step_up(
+            &proof,
+            params(),
+            &action,
+            &[] as &[Vec<u8>],
+            &nonces
+        ))
+        .unwrap_err(),
         AuthError::NonceAlreadyUsed,
         "one consent, one action"
     );
@@ -133,7 +162,14 @@ fn a_login_proof_cannot_be_presented_as_a_step_up() {
         .expect("signing");
 
     assert_eq!(
-        block_on(verify_step_up(&proof, params(), &action, &nonces)).unwrap_err(),
+        block_on(verify_step_up(
+            &proof,
+            params(),
+            &action,
+            &[] as &[Vec<u8>],
+            &nonces
+        ))
+        .unwrap_err(),
         AuthError::BadSignature
     );
 }
