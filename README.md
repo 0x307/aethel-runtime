@@ -1,6 +1,6 @@
 # aethel-vault — the agent-held wallet
 
-> **Tier:** Preview · **MSRV:** 1.87 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
+> **Tier:** Lab · **MSRV:** 1.87 · **License:** Apache-2.0 · Not independently audited, see [the crate family](#the-0x307-crate-family)
 
 **Crate: `aethel-vault`. Repository: `aethel-runtime`.**
 
@@ -292,19 +292,22 @@ Apache-2.0 — see [LICENSE](LICENSE)
 
 ## The 0x307 crate family
 
-`aethel-vault` is one of six open-source crates from [0x307](https://0x307.com/crates), held to one
+`aethel-vault` is one of nine open-source crates from [0x307](https://0x307.com/crates), held to one
 audit and stability standard.
 
-| Crate | Tier | What it does |
-|---|---|---|
-| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) |
-| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes |
-| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing |
-| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start |
-| [aethel-vault](https://crates.io/crates/aethel-vault) (this crate) | Preview | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records |
-| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path |
+| Crate | Tier | What it does | Builds on |
+|---|---|---|---|
+| [pqc-kem](https://crates.io/crates/pqc-kem) | Production | ML-KEM (FIPS 203), the X25519 + ML-KEM-768 hybrid, X-Wing, and sealed boxes | none in the family |
+| [pqc-sig](https://crates.io/crates/pqc-sig) | Production | ML-DSA, SLH-DSA and FN-DSA signatures (FIPS 204/205/206) | none in the family |
+| [aethel-core](https://crates.io/crates/aethel-core) | Production | Post-quantum anonymous identity: a separate identifier per context, context-bound ML-DSA signing | pqc-sig 0.5 |
+| [aethel-auth](https://crates.io/crates/aethel-auth) | Preview | Delegated authority for agent identities: login proofs, bounded delegation, step-up approval, revocation | aethel-core 0.7 |
+| [aethel-sdk](https://crates.io/crates/aethel-sdk) | Preview | The SDK over aethel-core, and the place to start | pqc-sig 0.5 (aethel-core 0.7 vendored) |
+| [erand-nats](https://crates.io/crates/erand-nats) | Preview | A post-quantum NATS client inside a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [witan](https://crates.io/crates/witan) | Preview | Post-quantum gossip engine with message-level authentication, as a WASM component | pqc-kem 0.2, pqc-sig 0.4 |
+| [aethel-vault](https://crates.io/crates/aethel-vault) (this crate) | Lab | Agent-held wallet: policy-gated x402 / EIP-3009 signing with ML-DSA-65 spend records | aethel-core 0.7 |
+| [pqc-privacy](https://crates.io/crates/pqc-privacy) | Lab | Research bundle, kept off every identity and payment path | pqc-kem 0.3, pqc-sig 0.5 |
 
-**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research, never on an identity or payment path.
+**Production** crates are thin, standards-bound libraries meant to be depended on today. **Preview** crates work and are published, with APIs still settling. **Lab** crates are research and experiments: try them, but keep them off a production identity or payment path.
 
 **Runnable examples:** [0x307/examples](https://github.com/0x307/examples), one program per
 crate, pinned to the published versions.
