@@ -52,9 +52,13 @@
 //! a delegation's action count is capped the same way.
 //!
 //! **A signature is not checked here.** `from_bytes` checks structure only.
-//! Verification stays in `verify_delegation`, `verify_login`,
-//! `verify_login_for_request` and `check_approval`, and a value read with
-//! `from_bytes` must go through them like any other.
+//! A value read with `from_bytes` goes through the same checks as any other
+//! before it is acted on: a delegation through `authorise` or
+//! `VerifiedDelegation::verify` (not `verify_delegation` alone, which skips
+//! the principal set and both revoked sets), a login proof through
+//! `verify_login` or `verify_login_for_request`, an approval through
+//! `check_approval`, and a delegation revocation through
+//! `verify_delegation_revocation`.
 
 use crate::approval::Approval;
 use crate::delegation::{Bounds, Delegation};
@@ -237,8 +241,10 @@ impl Delegation {
     ///
     /// Returns [`AuthError::Malformed`] for any defect; see [`crate::wire`]
     /// for the list. **This checks structure only, never the signature.**
-    /// Pass the result to [`crate::verify_delegation`] or
-    /// [`crate::authorise`] before relying on it. The approver limits
+    /// Pass the result to [`crate::authorise`] or
+    /// [`crate::VerifiedDelegation::verify`] before relying on it;
+    /// [`crate::verify_delegation`] alone skips the principal set and both
+    /// revoked sets. The approver limits
     /// ([`Bounds::approvers`]) are `verify_delegation`'s to check, not this
     /// function's; only the structure and the version/content match are.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AuthError> {

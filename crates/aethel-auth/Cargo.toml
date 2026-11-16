@@ -160,6 +160,11 @@ path = "tests/delegation_revocation.rs"
 required-features = ["holder"]
 
 [[test]]
+name = "revoked_set_types"
+path = "tests/revoked_set_types.rs"
+required-features = ["holder"]
+
+[[test]]
 name = "named_approvers"
 path = "tests/named_approvers.rs"
 required-features = ["holder", "serde"]

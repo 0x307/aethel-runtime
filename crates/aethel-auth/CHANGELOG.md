@@ -3,18 +3,19 @@
 All notable changes to this crate are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-11-16
 
 Breaking. Revocation reaches login and step-up and gains a per-delegation
 form, an approval can come from a named approver, and the signed statements
-get a canonical binary encoding. No signed byte, id or JSON of any 0.3 value
-changes: 0.3 delegations, proofs and approvals still decode and verify. The
-source changes a 0.3 caller needs are listed under Migration.
+get a canonical binary encoding. No signed byte or id of any 0.3 value
+changes, and 0.3 delegations, proofs and approvals still decode and verify.
+One JSON shape does change: a new `Approval` serialises its signer as
+`approver_key`, which a 0.3 reader rejects, so update readers before writers.
+The source changes a 0.3 caller needs are listed under Migration.
 
-Formats need Ken's review before publish: `tests/vectors/` holds the binary
-vectors (`wire_v1.json`, `wire_v2.json`) and the 0.3 fixtures
-(`v0_3_delegations.json`), which were recorded from the 0.3.1 code before any
-0.4 change.
+`tests/vectors/` holds the binary vectors (`wire_v1.json`, `wire_v2.json`)
+and the 0.3 fixtures (`v0_3_delegations.json`), which were recorded from the
+0.3.1 code before any 0.4 change.
 
 ### Breaking
 
@@ -63,8 +64,10 @@ vectors (`wire_v1.json`, `wire_v2.json`) and the 0.3 fixtures
   delegation without touching the principal's others (a key `Revocation` ends
   all of them).
 - **`RevokedDelegations`**, the relying party's set of revoked delegation ids,
-  implemented for `[[u8; 32]]` and for `Fn(&[u8; 32]) -> bool`, mirroring
-  `RevokedKeys`.
+  implemented for `[[u8; 32]]`, `Vec<[u8; 32]>`, `HashSet<[u8; 32]>`,
+  `BTreeSet<[u8; 32]>` and `Fn(&[u8; 32]) -> bool`, mirroring `RevokedKeys`.
+- **`RevokedKeys` for `Vec<Vec<u8>>`**, so `&revoked` works when the set is a
+  plain `Vec` as well as a slice.
 - **`Holder::revoke_delegation(&delegation, issued_at)`** (behind `holder`).
   Panics, as documented, if the holder is not the delegation's principal.
 - **`VerifiedDelegation`: verify once, re-check cheaply.**
@@ -180,7 +183,7 @@ What does not change:
   unchanged. A delegation without approvers is version 1, with the same bytes,
   purpose, id and wire encoding as 0.3.
 
-## [0.3.1] - Unreleased
+## [0.3.1] - not published (released as part of 0.4.0)
 
 Docs, tests and CI only. No change to the public API, to any signed bytes or
 to any JSON, and none to `aethel-vault`. The only change under `src/` is

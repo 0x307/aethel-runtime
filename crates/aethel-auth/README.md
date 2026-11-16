@@ -84,16 +84,16 @@ let rev = Holder::new(&principal, audience).revoke_delegation(&delegation, now);
 
 // The relying party's side. Keep the id once the revocation verifies.
 verify_delegation_revocation(&rev, &delegation, audience)?;
-revoked_ids.push(delegation.id()); // revoked_ids: Vec<[u8; 32]>
+revoked_ids.push(delegation.id()); // revoked_ids: Vec<[u8; 32]>, revoked_keys: Vec<Vec<u8>>
 
 // From now on, pass the set to authorise and check_approval.
 let refused = authorise(
-    &delegation, audience, &principals, revoked_keys, revoked_ids.as_slice(),
+    &delegation, audience, &principals, &revoked_keys, &revoked_ids,
     &delegate_key, b"transfer", Some(5), now,
 ); // Err(AuthError::Revoked)
 ```
 
-`verify_delegation_revocation` checks, in this order: no field is empty; the revocation's audience, the audience you expect and the delegation's all agree (`AudienceMismatch`); the revocation names this delegation and is signed by its principal (`NotAuthorised`, which is what a delegate, an authority or a named approver gets); the signature (`BadSignature`). There is no time cutoff, and the delegation need not still be live: once you accept a revocation it holds from then on. `RevokedDelegations` is implemented for `[[u8; 32]]` and for any `Fn(&[u8; 32]) -> bool`, so a closure over your own store works.
+`verify_delegation_revocation` checks, in this order: no field is empty; the revocation's audience, the audience you expect and the delegation's all agree (`AudienceMismatch`); the revocation names this delegation and is signed by its principal (`NotAuthorised`, which is what a delegate, an authority or a named approver gets); the signature (`BadSignature`). There is no time cutoff, and the delegation need not still be live: once you accept a revocation it holds from then on. `RevokedDelegations` is implemented for a slice or `Vec` of ids, `HashSet<[u8; 32]>`, `BTreeSet<[u8; 32]>` and any `Fn(&[u8; 32]) -> bool`, so a closure over your own store works.
 
 ## Verify once, re-check cheaply
 
@@ -102,14 +102,14 @@ let refused = authorise(
 ```rust
 // Once: everything authorise checks except the per-attempt parts.
 let verified = VerifiedDelegation::verify(
-    &delegation, audience, &principals, revoked_keys, revoked_ids, now,
+    &delegation, audience, &principals, &revoked_keys, &revoked_ids, now,
 )?;
 
 // Per request: no signature check. Audience, window and both revoked sets are
 // checked again against what you pass now.
-verified.recheck(audience, revoked_keys, revoked_ids, now)?;
+verified.recheck(audience, &revoked_keys, &revoked_ids, now)?;
 let obligations = verified.authorise(
-    audience, revoked_keys, revoked_ids, &delegate_key, b"transfer", Some(5), now,
+    audience, &revoked_keys, &revoked_ids, &delegate_key, b"transfer", Some(5), now,
 )?;
 ```
 
@@ -133,7 +133,7 @@ let approval = Holder::new(&approver, audience)
     .approve(&delegation, &digest, b"transfer", 500, nonce, now, 300);
 
 check_approval(
-    &delegation, &approval, params, &principals, revoked_keys, revoked_ids,
+    &delegation, &approval, params, &principals, &revoked_keys, &revoked_ids,
     &digest, b"transfer", 500, &nonces,
 ).await?;
 ```
@@ -153,8 +153,13 @@ let back = Delegation::from_bytes(&bytes)?; // AuthError::Malformed on any defec
 assert_eq!(back, delegation);
 assert_eq!(back.to_bytes(), bytes);
 
-// Structure only. The signature is checked by the verify function, as always.
-verify_delegation(&back, audience, now)?;
+// Structure only. Before acting on it, check it the way you check any
+// delegation: authorise (or VerifiedDelegation::verify), which also checks the
+// principal set and both revoked sets. verify_delegation alone does not.
+let obligations = authorise(
+    &back, audience, &principals, &revoked_keys, &revoked_ids,
+    &delegate_key, b"transfer", Some(5), now,
+)?;
 ```
 
 The layout is the same for every type:
@@ -196,7 +201,7 @@ A proof without a digest has the same signed bytes and the same JSON as before t
 
 ## Login proofs and revocation
 
-`verify_login`, `verify_login_for_request` and `verify_step_up` each take the relying party's revoked-key set, `revoked: &R where R: RevokedKeys`, directly before `nonces`. A proof signed by a key in it is refused with `AuthError::Revoked`. The set is the one you keep: a slice, a `HashSet<Vec<u8>>`, or a closure over your store.
+`verify_login`, `verify_login_for_request` and `verify_step_up` each take the relying party's revoked-key set, `revoked: &R where R: RevokedKeys`, directly before `nonces`. A proof signed by a key in it is refused with `AuthError::Revoked`. The set is the one you keep: a slice or `Vec<Vec<u8>>`, a `HashSet<Vec<u8>>` or `BTreeSet<Vec<u8>>`, or a closure over your store.
 
 ```rust
 let who = verify_login(&proof, params, &revoked, &nonces).await?;
