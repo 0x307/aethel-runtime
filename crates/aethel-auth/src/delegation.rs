@@ -82,8 +82,9 @@ pub const MAX_APPROVERS: usize = 8;
 /// The keys this relying party has seen a verified revocation for.
 ///
 /// [`authorise`] asks it about both keys of a delegation. Implemented for a
-/// slice of keys, for `std`'s `HashSet` and `BTreeSet` of keys, and for any
-/// `Fn(&[u8]) -> bool`, so a relying party can answer from its own store.
+/// slice or `Vec` of keys, for `std`'s `HashSet` and `BTreeSet` of keys, and
+/// for any `Fn(&[u8]) -> bool`, so a relying party can answer from its own
+/// store.
 ///
 /// Keys are compared as decoded bytes. Never answer this by comparing keys as
 /// text: a store keyed on one text spelling of a key misses the same key
@@ -100,6 +101,12 @@ pub trait RevokedKeys {
 impl RevokedKeys for [Vec<u8>] {
     fn is_revoked(&self, public_key: &[u8]) -> bool {
         self.iter().any(|k| k == public_key)
+    }
+}
+
+impl RevokedKeys for Vec<Vec<u8>> {
+    fn is_revoked(&self, public_key: &[u8]) -> bool {
+        self.as_slice().is_revoked(public_key)
     }
 }
 
@@ -126,7 +133,8 @@ impl RevokedKeys for std::collections::BTreeSet<Vec<u8>> {
 ///
 /// [`authorise`] and [`crate::check_approval`] ask it about
 /// [`Delegation::id`] and refuse a delegation in it with
-/// [`AuthError::Revoked`]. Implemented for a slice of ids and for any
+/// [`AuthError::Revoked`]. Implemented for a slice or `Vec` of ids, for
+/// `std`'s `HashSet` and `BTreeSet` of ids, and for any
 /// `Fn(&[u8; 32]) -> bool`, mirroring [`RevokedKeys`].
 ///
 /// A relying party that has accepted no delegation revocation passes an empty
@@ -143,9 +151,27 @@ impl RevokedDelegations for [[u8; 32]] {
     }
 }
 
+impl RevokedDelegations for Vec<[u8; 32]> {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self.as_slice().is_revoked_delegation(id)
+    }
+}
+
 impl<F: Fn(&[u8; 32]) -> bool> RevokedDelegations for F {
     fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
         self(id)
+    }
+}
+
+impl<S: core::hash::BuildHasher> RevokedDelegations for std::collections::HashSet<[u8; 32], S> {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self.contains(id)
+    }
+}
+
+impl RevokedDelegations for std::collections::BTreeSet<[u8; 32]> {
+    fn is_revoked_delegation(&self, id: &[u8; 32]) -> bool {
+        self.contains(id)
     }
 }
 
@@ -411,6 +437,13 @@ impl RemainingObligations {
 /// without under `AUTH_DELEGATION_V1`, so neither can be relabelled as the
 /// other. The approver limits ([`Bounds::approvers`]) are checked before the
 /// signature and refused with [`AuthError::Malformed`].
+///
+/// **This is not enough to act on a delegation.** It checks the signature,
+/// the window and the audience only. It does not check that the principal is
+/// one you recognise, and it does not consult either revoked set, so a
+/// delegation from a stranger, from a revoked key, or one you have revoked by
+/// id passes it. Before acting, use [`authorise`] or
+/// [`VerifiedDelegation::verify`], which run this check and those.
 pub fn verify_delegation(
     delegation: &Delegation,
     expected_audience: &[u8],
